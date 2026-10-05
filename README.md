@@ -23,8 +23,11 @@ That is all of it. `Peek.ahk` is a text file, and the executable that runs it is
 AutoHotkey's own interpreter - the same copy millions of machines already have,
 with the Defender reputation that comes of that. Every feature behaves the same:
 the hotkey, the settings window, "Restart as administrator", "Start with
-Windows". The one difference is that an update opens the release page rather
-than replacing anything, because there is no executable here to replace.
+Windows". Peek's own icon comes too - the script carries a copy of it, so the
+tray and every window look the same as they do from the executable, with nothing
+to download alongside. The one difference is that an update opens the release
+page rather than replacing anything, because there is no executable here to
+replace.
 
 ### Download the executable
 

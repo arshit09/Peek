@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetCompanyName Arshit Vaghasiya
 ;@Ahk2Exe-SetCopyright Copyright (C) 2026 Arshit Vaghasiya - GPL-3.0-or-later
 ;@Ahk2Exe-SetOrigFilename Peek.exe
-;@Ahk2Exe-SetVersion 1.1.0.0
+;@Ahk2Exe-SetVersion 1.2.0.0
 ; Compile without /compress. A UPX- or MPRESS-packed AutoHotkey binary is what
 ; antivirus heuristics flag hardest, and the filled-in fields above are there so
 ; the executable at least carries a complete version-info resource. Neither is a
@@ -122,7 +122,7 @@ global INI    := A_ScriptDir "\Peek.ini"
 ; (section 13) compares against the tag of the newest GitHub release. These are
 ; up here with the other constants rather than down with the updater because the
 ; startup code in section 5 reads them.
-global APPVER  := "1.1.0"
+global APPVER  := "1.2.0"
 global REPO    := "arshit09/Peek"
 global UPD_API := "https://api.github.com/repos/" REPO "/releases/latest"
 global UPD_UA  := "Peek/" APPVER
@@ -135,6 +135,12 @@ global gCores := DllCall("GetActiveProcessorCount", "UShort", 0xFFFF, "UInt") ||
 ;-------------------------------------------------------------------------------
 ; 2. Settings
 ;-------------------------------------------------------------------------------
+; The icon comes first. AutoHotkey hands each Gui the main icon at the moment
+; the Gui is created, and the elevation question a few lines down can already
+; put a dialog on screen, so a run from source has to claim the icon before
+; either of those happens. Section 15 has the detail.
+ApplyScriptIcon()
+
 global Cfg := LoadSettings()
 global gNetOK := A_IsAdmin && HasEStats()
 
@@ -162,7 +168,7 @@ AskElevate() {
          . "No     - continue; network columns will read n/a`n"
          . "Cancel - quit`n`n"
          . "(Silence this in Settings: Ask about elevation.)"
-    switch MsgBox(msg, "Peek - administrator rights", "YesNoCancel Icon? 0x1000") {
+    switch Note(msg, "Peek - administrator rights", "YesNoCancel Icon? 0x1000") {
         case "Yes":  Elevate()
         case "Cancel", "": ExitApp
     }
@@ -177,7 +183,7 @@ Elevate() {
             Run '*RunAs "' A_AhkPath '" /restart "' A_ScriptFullPath '"'
         ExitApp
     } catch
-        MsgBox "Elevation was cancelled or denied.", "Peek", "Icon! 0x1000"
+        Note "Elevation was cancelled or denied.", "Peek", "Icon! 0x1000"
 }
 
 HasEStats() {
@@ -284,7 +290,7 @@ ApplyHotkey(hk) {
         gHotkeyOn := true
         return true
     } catch as e {
-        MsgBox "Could not register the hotkey '" hk "'.`n`n" e.Message,
+        Note "Could not register the hotkey '" hk "'.`n`n" e.Message,
                "Peek", "Icon! 0x1000"
         return false
     }
@@ -514,18 +520,18 @@ ApplySettings() {
         if SGc.col[c.key].Value
             keys.Push(c.key)                     ; canonical order, not click order
     if !keys.Length {
-        MsgBox "Pick at least one column.", "Peek", "Icon! 0x1000"
+        Note "Pick at least one column.", "Peek", "Icon! 0x1000"
         return false
     }
     iv := NumOr(SGc.interval.Value, 0)
     if iv < 300 || iv > 5000 {
-        MsgBox "The refresh interval has to be between 300 and 5000 ms.",
+        Note "The refresh interval has to be between 300 and 5000 ms.",
                "Peek", "Icon! 0x1000"
         return false
     }
     bi := NumOr(SGc.bgInterval.Value, 0)
     if bi < 500 || bi > 60000 {
-        MsgBox "The background scan interval has to be between 500 and 60000 ms.",
+        Note "The background scan interval has to be between 500 and 60000 ms.",
                "Peek", "Icon! 0x1000"
         return false
     }
@@ -559,7 +565,7 @@ ApplySettings() {
         if SetStartup(SGc.startup.Value)
             gTaskOn := SGc.startup.Value
         else {
-            MsgBox (SGc.startup.Value
+            Note (SGc.startup.Value
                  ? "Could not create the startup task.`n`nIt needs administrator"
                  . " rights - the consent prompt may have been declined."
                  : "Could not remove the startup task.`n`nIt needs administrator"
@@ -591,7 +597,7 @@ OpenPromo() {
     try
         Run URL
     catch
-        MsgBox "Could not open a browser for:`n`n" URL, "Peek", "Icon! 0x1000"
+        Note "Could not open a browser for:`n`n" URL, "Peek", "Icon! 0x1000"
 }
 
 CloseSettings() {
@@ -642,7 +648,7 @@ CaptureHotkey() {
     if key = "Escape" || key = ""
         return ""
     if mods = "" {
-        MsgBox "Please include at least one modifier (Ctrl, Alt, Shift or Win),"
+        Note "Please include at least one modifier (Ctrl, Alt, Shift or Win),"
              . " otherwise the key would be swallowed system-wide.",
                "Peek", "Icon! 0x1000"
         return ""
@@ -1527,7 +1533,7 @@ FetchTick() {
         kind := gJob.kind
         CancelFetch()
         if kind = "download"
-            MsgBox "The download did not finish within 15 minutes and was"
+            Note "The download did not finish within 15 minutes and was"
                  . " stopped.`n`nNothing has been changed.",
                    "Peek - update", "Icon! 0x1000"
         else
@@ -1558,7 +1564,7 @@ CheckForUpdates(why := "manual") {
     global gUpdWhy
     if gJob {
         if why = "manual"
-            MsgBox "A check is already running.", "Peek - update", "Iconi 0x1000"
+            Note "A check is already running.", "Peek - update", "Iconi 0x1000"
         return
     }
     gUpdWhy := why
@@ -1580,7 +1586,12 @@ CheckArrived(job) {
               . " against.`n`nThe releases are at " RepoUrl() "/releases/latest")
         return
     }
-    if !(rel := ParseRelease(txt)) {
+    ; Whatever comes back is someone else's document, so nothing it can contain
+    ; is allowed to reach the user as a crash: a throw in here reads the same as
+    ; a release that could not be understood.
+    rel := ""
+    try rel := ParseRelease(txt)
+    if !rel {
         UpdFail("GitHub answered, but no usable release with a Peek.exe was"
               . " found in it.`n`nThe releases are at "
               . RepoUrl() "/releases/latest")
@@ -1588,7 +1599,7 @@ CheckArrived(job) {
     }
     if VerCompare(rel.ver, APPVER) <= 0 {
         if gUpdWhy = "manual"
-            MsgBox "Peek " APPVER " is the newest release.", "Peek - up to date",
+            Note "Peek " APPVER " is the newest release.", "Peek - up to date",
                    "Iconi 0x1000"
         return
     }
@@ -1601,7 +1612,7 @@ CheckArrived(job) {
 
 UpdFail(msg) {
     if gUpdWhy = "manual"
-        MsgBox msg, "Peek - update", "Icon! 0x1000"
+        Note msg, "Peek - update", "Icon! 0x1000"
 }
 
 ; A whole JSON parser is not worth carrying for six fields of one document whose
@@ -1617,7 +1628,13 @@ ParseRelease(j) {
         return ""
     page := RegExMatch(j, '"html_url"\s*:\s*"(https://github\.com/[^"]+/releases/tag/[^"]+)"', &m)
           ? JsonStr(m[1]) : RepoUrl() "/releases/latest"
-    body := RegExMatch(j, '"body"\s*:\s*"((?:[^"\\]|\\.)*)"', &m) ? JsonStr(m[1]) : ""
+    ; Possessive quantifiers, and they are not decoration. Written the ordinary
+    ; greedy way - (?:[^"\\]|\\.)* - this leaves PCRE a backtracking position
+    ; per character of the release notes, and a few thousand characters of them
+    ; is enough to exhaust its JIT stack and throw. "++" and "*+" consume each
+    ; run of plain characters without leaving anywhere to go back to, which is
+    ; both correct here and what keeps the stack flat however long the notes get.
+    body := RegExMatch(j, '"body"\s*:\s*"((?:[^"\\]++|\\.)*+)"', &m) ? JsonStr(m[1]) : ""
 
     ; Everything below reads from the assets array onwards: the release carries a
     ; "name" of its own, and one named like a file would otherwise be mistaken
@@ -1727,7 +1744,7 @@ OpenUrl(url) {
     try
         Run url
     catch
-        MsgBox "Could not open a browser for:`n`n" url, "Peek", "Icon! 0x1000"
+        Note "Could not open a browser for:`n`n" url, "Peek", "Icon! 0x1000"
 }
 
 ;--- downloading ---------------------------------------------------------------
@@ -1736,7 +1753,7 @@ StartInstall(rel) {
     ; Running from source there is no Peek.exe here to replace, and silently
     ; writing one next to the script would be a surprise.
     if !A_IsCompiled {
-        MsgBox "Peek is running from Peek.ahk, so there is no Peek.exe here for"
+        Note "Peek is running from Peek.ahk, so there is no Peek.exe here for"
              . " the update to replace.`n`nThe new Peek.exe is on the release"
              . " page, which is about to open; from source, pull the new"
              . " Peek.ahk and rebuild instead.", "Peek - update", "Iconi 0x1000"
@@ -1744,7 +1761,7 @@ StartInstall(rel) {
         return
     }
     if gJob {
-        MsgBox "A transfer is already running.", "Peek - update", "Iconi 0x1000"
+        Note "A transfer is already running.", "Peek - update", "Iconi 0x1000"
         return
     }
     gUpdRel := rel
@@ -1752,7 +1769,7 @@ StartInstall(rel) {
     if !StartFetch("download", rel.asset.url, UPD_DIR "\" rel.asset.name, []
                  , rel.asset.size) {
         CloseUpdProgress()
-        MsgBox "Could not start a helper to download the update.`n`nNeither"
+        Note "Could not start a helper to download the update.`n`nNeither"
              . " curl.exe nor PowerShell could be run.", "Peek - update",
                "Icon! 0x1000"
     }
@@ -1800,7 +1817,7 @@ DownloadArrived(job) {
     }
     if (why := VerifyDownload(job.out, rel.asset)) != "" {
         try FileDelete(job.out)
-        MsgBox "The download did not arrive intact, so nothing was replaced.`n`n"
+        Note "The download did not arrive intact, so nothing was replaced.`n`n"
              . why, "Peek - update", "Icon! 0x1000"
         return
     }
@@ -1890,7 +1907,7 @@ ApplyUpdate(rel, newFile) {
                       . " for the new executable." : "")
          . (needAdmin ? "`n`nWindows will ask for administrator rights once." : "")
          . "`n`nInstall it now?"
-    if MsgBox(msg, "Peek - install update", "OkCancel Iconi 0x1000") != "OK" {
+    if Note(msg, "Peek - install update", "OkCancel Iconi 0x1000") != "OK" {
         try FileDelete(newFile)
         if xml != ""
             try FileDelete(xml)
@@ -1898,7 +1915,7 @@ ApplyUpdate(rel, newFile) {
     }
 
     if !(ps := WriteUpdater(target, newFile, xml)) {
-        MsgBox "The update helper could not be written to " UPD_DIR
+        Note "The update helper could not be written to " UPD_DIR
              . ".`n`nNothing has been changed.", "Peek - update", "Icon! 0x1000"
         return
     }
@@ -1908,7 +1925,7 @@ ApplyUpdate(rel, newFile) {
         SaveSettings()
         Run((needAdmin ? "*RunAs " : "") cmd, UPD_DIR, "Hide")
     } catch {
-        MsgBox "The update helper could not be started"
+        Note "The update helper could not be started"
              . (needAdmin ? ", or the elevation prompt was declined" : "")
              . ".`n`nNothing has been changed.", "Peek - update", "Icon! 0x1000"
         return
@@ -2029,4 +2046,248 @@ UpdateTick() {
     if due
         CheckForUpdates("auto")
     SetTimer(UpdateTick, -3600000)                 ; and look again in an hour
+}
+
+;-------------------------------------------------------------------------------
+; 14. Message boxes
+;-------------------------------------------------------------------------------
+; Every Gui Peek opens carries the tray icon in its title bar, because
+; AutoHotkey hands one to each Gui it creates. A MsgBox is not a Gui - it is a
+; plain Win32 dialog - and Windows leaves an unowned dialog with no icon at all,
+; so Peek's message boxes came up blank beside windows that were not.
+;
+; There is no MsgBox option for this, and giving the dialog an owner does not do
+; it either: an owned dialog still answers WM_GETICON with nothing. The icon has
+; to be set on the dialog itself, which can only be done once it exists - hence
+; the timer. A MsgBox blocks the thread that opened it, but timers keep running
+; while one is on screen, so a short one gets in, finds the dialog by its class
+; and sets the icon. Failing to find it costs nothing: the title bar is then
+; just as blank as it used to be.
+;
+; The icons are read from a Gui created once and never shown. AutoHotkey hands
+; every Gui the same pair of handles it uses for the tray, so this follows the
+; icon the executable was compiled with - and any later TraySetIcon - without
+; naming an icon resource or reading the file back off disk. Both sizes are
+; copied: the big one is the title bar and Alt-Tab, the small one is the taskbar.
+
+; Everything Peek has to say goes through here, so no dialog can be left looking
+; like it belongs to something else. The arguments are MsgBox's own, passed
+; straight through.
+Note(text, title := "Peek", opts := "") {
+    SetTimer(DressDialog.Bind(title, 1), -30)
+    return MsgBox(text, title, opts)
+}
+
+DressDialog(title, tries) {
+    static src := ""
+    ; Hidden windows are deliberately left undetected here: the dialog is either
+    ; on screen or it has not been created yet, and waiting is the right answer.
+    if !(hwnd := WinExist(title " ahk_class #32770")) {
+        if tries < 40                       ; keep looking for two seconds
+            SetTimer(DressDialog.Bind(title, tries + 1), -50)
+        return
+    }
+    if !src
+        src := Gui()                        ; never shown - it is here for its icons
+    DetectHiddenWindows True                ; thread-local, and src is hidden
+    try {
+        big := SendMessage(0x7F, 1, 0, , "ahk_id " src.Hwnd)   ; WM_GETICON, ICON_BIG
+        sml := SendMessage(0x7F, 0, 0, , "ahk_id " src.Hwnd)   ;             ICON_SMALL
+        if big
+            SendMessage(0x80, 1, big, , "ahk_id " hwnd)        ; WM_SETICON
+        if sml
+            SendMessage(0x80, 0, sml, , "ahk_id " hwnd)
+    }
+}
+
+;-------------------------------------------------------------------------------
+; 15. The icon when Peek runs from source
+;-------------------------------------------------------------------------------
+; Compiled, Peek.exe carries its icon in its own resources, and Windows uses it
+; for the tray, the windows and the dialogs alike. Run as Peek.ahk it would show
+; AutoHotkey's icon instead - and since the README now suggests running the
+; script in preference to the executable, that is the ordinary case rather than
+; the odd one.
+;
+; So the icon travels inside this file. A Peek.ico sitting next to the script
+; wins when there is one, which is the repository checkout, where that file is
+; the thing being edited; otherwise the embedded copy is written to %TEMP% once
+; and loaded from there, because TraySetIcon wants a path rather than bytes.
+; Writing it per version means a new icon is picked up instead of a stale copy
+; being reused forever.
+;
+; Only the sizes something actually asks for at run time are embedded - 16
+; through 64 - which is 7 KB rather than the 19 KB the full Peek.ico would cost
+; for 128 and 256 pixel images nothing here will ever request.
+
+ApplyScriptIcon() {
+    if A_IsCompiled                              ; already in its own resources
+        return
+    ico := A_ScriptDir "\Peek.ico"               ; the repository checkout
+    if !FileExist(ico) {
+        ico := A_Temp "\Peek-icon-" APPVER ".ico"
+        if !FileExist(ico) {
+            try {
+                f := FileOpen(ico, "w")
+                f.RawWrite(B64Decode(IconData()))
+                f.Close()
+            }
+        }
+    }
+    if FileExist(ico)
+        try TraySetIcon(ico)
+}
+
+; CryptStringToBinary rather than arithmetic of my own: it ships with every
+; Windows and it is the same decoder certificates go through.
+B64Decode(s) {
+    size := 0
+    if !DllCall("crypt32\CryptStringToBinaryW", "Str", s, "UInt", 0, "UInt", 1
+              , "Ptr", 0, "UInt*", &size, "Ptr", 0, "Ptr", 0)
+        throw Error("The embedded icon could not be measured.")
+    bin := Buffer(size)
+    if !DllCall("crypt32\CryptStringToBinaryW", "Str", s, "UInt", 0, "UInt", 1
+              , "Ptr", bin, "UInt*", &size, "Ptr", 0, "Ptr", 0)
+        throw Error("The embedded icon could not be decoded.")
+    return bin
+}
+
+; Peek.ico with the 128 and 256 pixel images dropped, base64. To regenerate it
+; after changing the icon, run tools\Embed-Icon.ps1 and paste what it prints.
+IconData() {
+    static B64 := "
+(Join
+AAABAAUAEBAAAAAAIACbAgAAVgAAABgYAAAAACAA5wMAAPECAAAgIAAAAAAgABkFAADYBgAAMDAA
+AAAAIAB7BwAA8QsAAEBAAAAAACAArwkAAGwTAACJUE5HDQoaCgAAAA1JSERSAAAAEAAAABAIBgAA
+AB/z/2EAAAJiSURBVHicdVM9TxRRFD3vY2Z2lmX5MKggISaGxKiVsTXGwsKEWCz/ACOFhX+B2sbG
+So2VtBgTaeyMH3QmGDspNIhoUOJmWXZn5r13r3lvBgTR18zmvnPOvee8u2JyYWXUuMZDKD0DZyKA
+Jf5zpBBgBgkdGSK73N/pzusijx7Jer1FvV8MIcS/iL5IDGSWIKWQlOVxPDgymya50Eyu5XZ+Utn5
+MH9PzhGjFkkszk3jRDNGZkjcXFyjr4VtabYmTHekazluEPEC9TTC1elhRLpUHa0J+akooOHsISJX
+IxeOIUUpUBgG1YBObjGidMBYYwBnoLkS8GBP1RLY7hrcuXYac5cnw93jV1/wZGUTkRIhyIAkB8/V
+bC0YjF7hQlCJljCFxfnxOs5NNAL4wsQAjCkOJeTJ3r5mZ4Lfi1ODSCKJ3BDeftxGVliQDwFAL7c4
+YtVVE/T7Oc6eauLNwpVw0c0sJm8/h3Nuf1wJCuBgfk+AbClAfgwPqBL0HMUO5OgAmkuBAwphgtKC
+BTkL6yh4dOS7GTC58Nsfci4k7p8z3PNfGUh2iFS5Cs00Rp4baCWgZFnz6ftasx5Xr4XACRZiQbz+
+vS3uLq26kyOp3e5kYrgGvP6wgXpUol++38CxmsC9Z6sYG0p5q93Xn7+1VSIJojn7gHdzojPjg53r
+l6Z+9HOrjg+lvJvbMn0AaaLQqEXYavdFmmj34t362NpmpzmQKCnqN+4vyaTRQrELW+Xm85Dyz9L4
+5yRi6Mqm/4h4AJR3n2qdFbes67BQakaz839n4bdxf6/3jq+x7yCYWRnqdZa1sfO/ARi2XVSwbZfv
+AAAAAElFTkSuQmCCiVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAADrklEQVR4nJ1W
+z4scRRT+XlV1T/c4u5NdD2r2koMoAx70koO5BGEhsAcPmv9A8CYEA2r+AEGI5OJNJScRIoGgqAke
+jYJCkoOHCP5IollziGR3ZnfnV1e9J6+6Z3Ym22yyFhT941W9973vfa+6CQCWz/y4kqZLZ4XlBKRo
+Q0D4P4N0Z9IlQ5fH443TD95/eZ2Wz9xYcUTfmWyxI8MuIPLY/gSAIQLNwCGNki0iDHo3vciqcxzO
+mbzd4e37BcgkBwJMhMGYUQQuHWtQEeSjUZEuLHdcv3vOSfBrYWeDAUkg4bGdWyJsDwOOP9fGW8cP
+K/SYTW/o8d6l28n93gN2RtYchJul44PRToYwGBVYfb6N1c6hOdv5H+7hr383TLuZNDUDzXV/Z1B0
+kzsdAjABwhgWAYEFniVmpa68D9Gmvh2YHwEVYAG2Rn5af3XSzh0QPEgE1lC06TViFQZCiCCc8P68
+C4DEElY7S0idie+KILh+pwvxAaLOHt7DDPUrGgD7BDCGsLlT4OTRZ/DZmy/O2d44/ws+vXILto5d
+ZYVrMtAU59hhXefRSk2kKVR0WmPQSilShLoMJOxmMBug2w/gmUZbyFVkjBBCLLJUYtD7ECqUdY1Z
+S5EAr3SeLJ1WDXP91iY2e4NYyIcHxULWZ1BS5EuKjDB2Rh4vHVnCt+8cm1v3wZe/4t1PrsHS3gAK
+AIHL6x6bSrScUabBB+RJKTXVtE5VzhOpeTTKWopCNU1ZA50cQtRwWWiJCvIVz1qHKboZlGUNeMZC
+uzINus/ATALUNVw8vtRel0HVTPMUyS5Fld+yyBVKpWZCE5GANYOwa4v2CqfyqxTpmoktglK1TRQ2
+pSiEWMiqD8RZGxe3MgvDHrmjaJvtkzw1MBzQykxlK/doDGdkSpFjH9CwwB//bOKrn+/AOUdlBoTP
+v/8zMnflxjou/fR3PCoUp9bmm2t3o+3C1ds48lQ7sqMnrDr+7e4GUitQ39R67WNRYINC0bjx68ee
+vTeRoQZpZg6jIqDwHM/7KBIROGeQJRaDoY/PupYMycWrvx/u9Ys0T23sfifs+0wmsxDTziyePtTw
+zKLrKzUKWmmy50TXWimIhUY6fbaGZDGzsjMYg5lZhIfUfPWjCyZtncRoq/BCyXAYqiruFQ5mPge1
+NgGyzMKRFGgsJDze/sKJH51ilhcoyTu26GMhr2nbAwwWJnHNRIZbN4XHpyKmfO3DFTKNsxA+AQnl
+b8tBf1xK/QrIdkHmsvDo9ODrt9f/A0v3ZdYKLfnAAAAAAElFTkSuQmCCiVBORw0KGgoAAAANSUhE
+UgAAACAAAAAgCAYAAABzenr0AAAE4ElEQVR4nLVXzWtcVRT/nfvuvHmTTkPrNDRBqK2IiouiBam2
+C5eiSBW0gmsX7kR0UUToTquCH3v1HzB1U0Wh4EKwiLTUDxQrGFrbkjRt00yTzNebd8+Rc++b6SSZ
+mTRkPOExmbnnns/f+d37CEe/jDD9stt97Ke9KO14B+Bn4dwkIAYjFWJE0TXAfItG9d35D568pL5J
+lybePns4isvTZAtTnNYBdvhfxEQw8Rgka8+5dOXojROPn6GpY+f2OBudp0JSkWYtA1Gk4W7VV2So
+jxER58Qh2Wal3VyIMnfAOuA42aQijWV1biGCUUi15sBrbAlA44m1prGcUbK94rLacSuSHUGrJhCO
+IFtOHERAK2O8dng3Du7bDvFBkP99finFR9/PopFyZForIuKOWAhPSNbOi7617NVE2wnuKVm8/8J9
+KNr1OD4zcxtf/36LdpQETmTCgjmsjKLyBAgLLEWotdjjwNsl+HZERFCAeZ86ZMyw0gkAowuA2UF9
+W0MeUlp+dWP8d+fXhSkEC9l8AD6zPuJBx6JRDN6sOuJCBUQ2XwHdf9tP6/rfx0vWBzDUpoT18Aju
+YGAjUYdaTgAnXnwAD0+VuxOrwfwzX8d738wgYwb5hQGgUn/dR2DlLlugeG6kjEfuLeOtp/f11Tl5
+dhY/z1QBsesT7xYgr4DoI5upgILGwUCQsfSlSkJe/qEYWFMBKCB6REdlbYM9mahN1XVuAM3mxj3A
+tgDCxWYG5/Jm56KEUk4KoXTDCKMLrsEB+NL3BSHpfsHzj01ickcSeuUrT/jr6hLOXVwM4BrWsl6A
+DYqzHwgNEVYaGQ49WMHJN55Yt6daa2P/sdOYqzZCCQdlp3/ifJaDpaMT3QEhGYJzDjvHrOcRHSXF
+Qn6OoBARyjGB3Qb97c1u4BjKmgqw9pUgziHL7lCoVqVDow0o9vK+DQmg2/9NYUA0KyVxNzDqcFC6
+/Bl2avHGOt1JCXo2RJufFhtQaNAZcl3rAtDdhZ0eEIpQl5kG7MrXeTgIuUdvoH/ux4TUnWE90TxX
+5MH6xHL6RI4D/W7WUFGYgKCDXju5jXBQ5nb6gpAdCgYefB3bHULcVrSegrX8EYWLxVpRboxM0FFK
+Hitav7+jasMF3ANcdXpAyB4XxYjw99VFXJpfRmU8CXAU8UR0fuYmrt+qoRQbXL6+hN8uLuD+yfFV
+p+HlGyv499qS17lZrePHP+dw8KHdoVp5FIsrLVy4cguxDQn707X80mfejDpK2w7bx2KMFQt+HDuy
+sNxEmjHiyCDNHJLYYme5uKoC1VoL9VaG2EbIHMNGBrvGk1Xj32i1sVRPERcCCfmKdJCvX5VwWq02
+f/H6U7/u31up11Pn49CzgEibwP6TmX1AvRJbA2OMxwFpw4T97VjtluKIL1ypll758PSjBYOok70P
+gJlvkDG7yKNSu0/mk69+2TdejtvsxB97Idhe9Idr9mp0D9ARfSEiWa63LTtnNHNSfGpCzDe1G6fI
+FF6VtO5fTNTED3/M7uzc50cjAUtjcbim6wsBxUULbp6i5LlP9xiy58nGFWTNDKDIjPi1tCOh2+Jg
+EytZusCSHfApJs98fJgKybQx0ZS4dPiBsxUhA4pivZbPSbt5tPndm2eMviLrP9y6fYhd63Mwz3qU
+rSKMkTxqc1Z9qC/1qb7/A6cOrzlEmUJDAAAAAElFTkSuQmCCiVBORw0KGgoAAAANSUhEUgAAADAA
+AAAwCAYAAABXAvmHAAAHQklEQVR4nNVaXYhdVxX+1t7nnPszk7FxMpk61ViMJtaCQUcKQkQExYI/
+kWAKviSUYqsvxRcppn3woQ2IL8EHEUosyYsQoVARRCyCWMSX/lCIGuPfQzNSzTg3zsy9c+85ey1Z
++5xz77m/c+5kMlMX7Ln3ntk/a6/9rW+tvfch5HLmqsVPH3Hz335lKZw59JiIOwXm44DMACDsjwhA
+mzDmOpF9Kd68dWn1+ydXcl3RVSx7sPj0648irD1LNliCiyEuBoSxr0IGZEPAhhCXrCBuPfP2cx97
+IdeZcFUsHiG3eP7V58zM/Hlpr0OS2AFEIBi8E0TAgAgFoaXKAfDm6oW3Lyw/rbr7FVg4/9pZWz94
+mZuNGMIWRMav3r4hZ1AyXUQYZJyp3xO65tq5f1/4+BU6/J03FwXxNTLBQbiOGn7PrU4ArBlvLBHA
+6Z/0B8NGEE7WCOGDAXjrCVOZnZf2hgOR9bX30kUJiJ1gre26ts6Fst+RJcxWMtUU1knbZTo/EUDk
+NJKOKMT2VHnVhQjtmLH0rghf+OQCosD0gTYH8bV/NvHr6w1UQwthryNlOp8OWOQYJW2CMO0p5j2k
+BYYEV859CMtHZidWP/WjP+DlPzUwV7VwLEaStrY/ZkikBnYp0JQy96iQMJLEYaEe4Pi9NSQsHkr6
+WSxbCfuVOHFfHe3YgbyeAtVZdQ/2ledFwMKIE8FslCJYfWJQ9FEn4Z7yXagLAnXq/RIRhTGXA25W
+Ny09X1Unvps6bqsUphl/aAX+nyYgMm4CuwshDUjjIKHDMkuP6zkjjlKidZVsbP8Eini6E1GlNVqu
+bSZjjaoOOlcN/CSl6wNSUv+07mCbXVkBrzwD1dDgmw/fj8Nzld4//ODpx+pGBy+8chMb7QSh1XSL
+M2uWmUSR5nfZB9SijVYH3z31AJ783P0T677/UBXfuHwN8zPhlD4wxol3g0ZZCESCD79nRqOkD0CD
+yZnLnh1fnIElAXNOiVxOf4VOt01xBdLc4s6FxQebXPHBCeQZp9ZJnVejqaSl3Ax69Xm3WUg0sSkX
+kHykHUwtSsld9IEuPkvXH83pO4oD42jM8/kEk7LmMZnx0jywJJv48UdT4iQp0u62NKqKNzYS74zj
+pBZZX3xnGYRKsWE3IJnpINQHuwkQUuXbHcbZTx3BJz5wsLtr6vYjadp79fdv4bV/rKEe2QKEdgAH
+6Ge5eXeVH0ejCpvbzRifP3EvLj2+PLG/0w/dh+Xzv8JWzH7LV5qO+7JKLt8uc+JBGjVFa2i+rScq
+Rw/XPcZVOb+xcL3iNx1OcGiugvnZCLGewHQZYicOiZK+U1yxXun3AcUyGHHMMEQILBAM8Hm+6Wi3
+Gay7In9kk/nAFJYsTaMyqt0YFkonqBpur4av0mWFjCFK+sCOWEhSi49gIRmdb5TqlUfAYbs2RQjx
+bmxoBiDkf5fNDgforZwW/VCQku3yvcMQjQ5y/TT5STE3KRvI/BzyNlx+LIzJhYo0JlOtQHrKlxc9
+XShHJsWskqeiX53w9pv6O8pPpli5aXMhFHxmWx+Yyomn9YEdtpMpaFSDWKn+irTmoVGinW7qB2hU
+SthLDwNSGs0oddIKhJb8JBLd6PrgNhzIAkv+XFMKVtHDWY3SzmN1eEemz7RObk0R9jco2peONepk
+Tp8bsgh9u2Hm6ksl1Dq61/7Lym0fifU0OLCmr2hH+vmvRgu3brcQGaRHfs7h+s2GV6Yyol3+7M8r
+DbBLfCAMDWFtvYWV/2z29V0s1SiAMYQbNxv+U7rnuFn6c+DMJRnORh3OnDyKh44t9N3T5DFIrXL1
+t3/FG39fRS07t3dOUK8E+PrDD2DxnlraV6Gdyq3/buH5X/4R680OrDV+rK22w0eOHMTXPv1BRIFe
+DvW30++v/20VP/nNDYSa2wwIzX71+ZEI3GjFgF466H91nWXg1qESoFoJPDbzZdfvcbMznowUevWo
+u18WgbfqVicBtpJe38Vx/FgWs/VwZJcjt5S6UpXQ0meW37d68fGTN9abHWsV8AXhzOr9DdPkb9LJ
+nPeFAeKhrF1RHAvN1SP31I9/d/QXr761oFhXWw1PwHELhmqDlzuaJlcsuffOz7Yb1bY1inXsnSSJ
+o3fP1ZNqZJM4cagofPqMTWrFFs185YdvwEYfhYt1fukFX8YGnUSZhXSZy3HdrgopE1Kugx++5xwM
+GxJc581AWF40gTkhrHyVUVyGT91p6QEUlzzCvxsS6W6ve3qQsQyzUFAxzPIizXzp4qJQkF6zcqLV
++q5ZJ51M7IXI8MIzjIavZI0kedCrV//yD86a6MBlbm/ouwWWvFvt473BSNETbXV/0ivWkDvr55o/
+e/KK0XcO9ItrNi5QWA9Bxgg7J+r0QyF/3wqrTqqb6qi6qs6qe9/LHvUvXnwUFD5Lxi6Jwsmf3+zz
+SpBGNgvysHErkPiZ5s+/VXjZI5fsQe2z31uiWu0xiLyjXrcB0UvSal1qvfxU3+s2/wOhsjCIw924
+3wAAAABJRU5ErkJggolQTkcNChoKAAAADUlIRFIAAABAAAAAQAgGAAAAqmlx3gAACXZJREFUeJzl
+W2uIXVcV/tY+59w7d+5Mwsy0SZtn+yMoWoImGhQqPtCimKQhJuI/qRpFKM2vUPRHk1SwlCJoUZBE
+pYIoGi15aSFW+8fmh3RClKSW1ookMUnTmUnG+z6PvWTtc87cR8499zEzmTtxDWdmuPfsdfa39trf
+/vbjEBqNmcxfIp448JdRJz++m4Fd0LwFrO8DOINlYeSC1HUoOkfAca808+L0cw8XGvHFd6q5MgcP
+KvMFEa966sI+e3hiEsp+gZS9C4QNBjwzlsUldSVsMHVX9guCRTDF+AzWOFSIwR8+rMee/OPKTPb+
+n6uh0Ue5VgJ7NR3dRRI2LCtjhvxI9Z2somweulo44dauffnms5+ZjTGrOC0mDvxjNJtZfUZl8o/q
+4rTHXlWDoMxlAmUiu4wu02ym/oJFMAk2wShYoxgRYS9bOEbBqm9NnrLyY9uD0oxLpJZJX+/NmLVr
+5cczQenm6RvPbN0h2E3r3/Ptya/YubGf6tKMByIHd7Mxeyo/7viVm1+d+u7Wn9G9By+MoFa5oOyh
+9exVJXHqxDiQRlBdMpI2nCjdQW6OiJ+hyRmC9quXkc09ZKNa3K0yIxu5VtJQSjgBg2xKAWVXww86
+1JOAYUfBtgha64bPSbFb1iqb36irxd02mPaYMMnwwA03DqAJqxWrPjavzeO+Fek91deMv18p42bZ
+Ry6joCUdTCLIX8EqowTtscG8hf0asdbCmANrFhH+W/XxxCfux3d2boQt/aCDvXWjgi8cfQOXb9aQ
+tRV0nN3MCn6NBLuk/GoOfPmUBkLEJFzEDC/QGB+2cOCRdQa8tLA0arvLDRibVuXw2EdWoVD1odAk
+lMhgZl5tAyxZgIE2gknhYccyBMhRRqQRodwngRjNWiaAdfCxmf/twQcfm3RZA6KJ01NNghDcJpOb
+ze7O1SDYnMLryeh2hdhkdjhODr4Z0u6jrmHDR6SfmAG8PALQLoW7KNihC/BdHgCT+fr/OADokAF8
+J0jQiK+QlamjiGcEUYM1CjPWc9P7Ph5f/2k1e3HlrwzaorJFjzNmq0FdjbUrQTJ227AUGdDhYB8x
+eF91jVs/juod7QJswHt+gCFH4UvbVmNFzq4vMjXdGY7xpVqAMxenUKwGyDgiVCPQkQboeShcag5g
+ZtgK+PU3P4CPv2e8qzKv/XsWO74/CdfXUHEGzIcDdPvyajE1vPR5mb1te3ClAS/6Pehwieb/0ANy
+/xgKVQ+K0kmsG/xpdbQXVQhJ8LVG1glnYhKQsEVTTEuDsZm9GeJrEDF9CSH5SRVCWOxRQJYZwlTu
+RICxyb1Sps1iZ191aCuFscgZMC//SWnbbx2WhAR5AQXMogkhXrwAxBORfioe9lk9bw6o+1qKyRDH
+XaC/1OUF6QLzXA+wRJF1IUBE8EiFDXc1Ef1CENd8SbCRUHvIAAJwq+gaVu40eskYP+RYRvHNBWE5
+cADaOBXA5VqAr3/qQez+8Fqzvp44kTEKlXHtVhXPnHgD/7xeRC5jGfFVD4BeGAETyeWuyzf6iQPR
+Yvac1m5J+9myh51b1+BHj32w6zq/f90KfOzQKwiijQjZdw2JrGsX9fpLOa1biLD3QIZzjLqfrqQw
+geH7AT66acKIl5qnU+VrLHHfu2YU68ZzcL0gpIHGluvHbqtbCGlBpTCSmicq5AehgrNUmBVpz5Bv
+XTdstab+NvAcgDZOTSb0ZiFFtDJ2v8MgL6EU5vmM3y3Rnkvdfup8B3QAJ3wYYhfS6aGyUbo0KTez
+FpFMPt04bVWBfavWnpUgzyMDWhcvFiKT4qF0ERZE7NQA9PW8pC6wEAFYrNkg2jldCNKJ/+/X7gAJ
+clsO6G+1+DYO6HtLK2yx+XNAs58euwAvXReIl8EXpAv0uirM4Xp+sxfqPwBYwmGw82RIt3l4n6xr
+yskVj4vz9RO3XvR/z35aRpLuMoAXWAj1ufs0rwxoFCcSPHS/N8gRY5opbY+PDMmvvhMXLkujZwtX
+kBt9xUTWrx/dbm+QE5BEMyVFZpbXKfjhJI3NCUszZzIRj85bRjtDc0wuE4Z2vgz1hIGXMq2tLxMz
+OScYgkrxExWVuss6RgcO4OTSAK5MFcwsMG0mGNXb/C7XfMwUquYAk5mDg0wQr86UzGKK+bxeINFs
+mXoCuDpdCvcHosBJ2dliFYWyi5XDnY8yix953JWpUmoAVFI/C4IAIzkHv/jzm/jd2X+hWPVQqfmo
+ugGqXsvlBga4gNx/5FVMzVaQscKdXR1o5LMWzr/9Lp7+1SRmijVzb5qfWyUX3zv+N7x68RpGhmzj
+Q1JCMqJYcbH/yFlcereY6kfqKt//4bVLOPLS68gPOwZTElYa2fOTxESS6MlxVNmr23jvCBxbpfa+
+2ZKLG7cqJnBJgkP2CNffk0cuG+4OtzMBcHmqiOGsXd8Zj+ukCMWKh4nRIYyPZlP9+IEmCZRkkSPb
+bG1qTyN7jrYFJs+X1JXIymJHWuoqFT5I+h0lcLF8LytLHVmMKNxLNMR9uy/pjp6vw6Ov7UwznIzC
+UEaUfkScbepup1UoJjebCPu2v+/Sjm0PTBdrnprry433CnmlQzNvL3RaXZbqCHuk+0k+aSJnAvNZ
+R//p/JWxH790cSO0rr8c1MalDdY+QIl5SZHTXMYKnv/Gw28rpcpN7xkNpunPbt0w/ctX3lw7U6o5
+jvBR23iyb7PW75DlrIX24/Mo9a/NkVQhH9/63FOnNn9y87rpSs2zlErng6UyrTXlsk5w9vWrYzPF
+agg+savImGoTB9470vLnQGoNa5Z3hKyEW2FbwMvn/zNxZvLKxCCfKDcmzWgRhuMj8on3sCZLFAXO
+2az5t8S8oy7eE0wD+Qxx67meQTWBreN3BJPvkH5BBjv2/nAkX6MLsJz1CLxl8MrMPE242nKAwLtc
+yvJDCsceLzL4abIzChwETTOvu+4SbEEgWAUzjj1eJOz9jYVjXwxy239wSmVHt3Ot6IJwV742B4ZL
+2ZGMrhVOV07v3yHYRbQTcIgmdq7PV7j6Mjm5bewWpC8IId4t3UGaP6DMqMNe5a85Gvr09MnLJeCQ
+TNlCrTB98muFbKX4CLvlE5QZcaCMfmzcnWyzSDmAV6jz4yMmWrAIJsEmGAVrGBdqZEp5ofiwEXPD
+n39+HxQdIFKbjBgVrcQBlpVJAivbbPQy67eg+bny75842oqVmkvFASHGzmdHh4PsboB2gfUWAMvr
+9XngOkidA/h42aq9iJNPFprwRfY/TwpVDDVO9EoAAAAASUVORK5CYII=
+)"
+    return B64
 }
