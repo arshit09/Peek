@@ -8,7 +8,14 @@
 ;@Ahk2Exe-SetName Peek
 ;@Ahk2Exe-SetDescription Peek - instant top-process overlay
 ;@Ahk2Exe-SetProductName Peek
+;@Ahk2Exe-SetCompanyName Arshit Vaghasiya
+;@Ahk2Exe-SetCopyright Copyright (C) 2026 Arshit Vaghasiya - GPL-3.0-or-later
+;@Ahk2Exe-SetOrigFilename Peek.exe
 ;@Ahk2Exe-SetVersion 1.1.0.0
+; Compile without /compress. A UPX- or MPRESS-packed AutoHotkey binary is what
+; antivirus heuristics flag hardest, and the filled-in fields above are there so
+; the executable at least carries a complete version-info resource. Neither is a
+; cure: see "Antivirus false positives" in the README.
 ;===============================================================================
 ;  Peek  -  press a hotkey, get an instant overlay of the top processes
 ;
@@ -1804,6 +1811,10 @@ DownloadArrived(job) {
 ; what happens next overwrites Peek.exe. The digest is the one that matters -
 ; size and the MZ signature only catch a truncated or redirected download.
 VerifyDownload(path, asset) {
+    if !FileExist(path)
+        return "It is no longer on disk. Antivirus software taking it away"
+             . " moments after the download is the usual reason, and the README"
+             . " section on false positives covers what to do about it."
     sz := 0
     try sz := FileGetSize(path)
     if !sz

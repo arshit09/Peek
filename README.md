@@ -7,9 +7,85 @@ the cursor, refreshes while it is up, and disappears on its own.
 
 ## Install
 
+There are two ways in, and the second one exists because Windows Defender tends
+to object to the compiled executable. They are the same program either way.
+
+### Run the script (no executable involved)
+
+1. Install [AutoHotkey v2](https://www.autohotkey.com/) - the installer from
+   autohotkey.com, nothing else.
+2. Download [`Peek.ahk`](Peek.ahk) from this repository.
+3. Double-click it.
+
+That is all of it. `Peek.ahk` is a text file, and the executable that runs it is
+AutoHotkey's own interpreter - the same copy millions of machines already have,
+with the Defender reputation that comes of that. Every feature behaves the same:
+the hotkey, the settings window, "Restart as administrator", "Start with
+Windows". The one difference is that an update opens the release page rather
+than replacing anything, because there is no executable here to replace.
+
+### Download the executable
+
 Download `Peek.exe` from the [latest release](../../releases/latest) and run it.
-No installer, no dependencies. Settings are written to `Peek.ini` next to the
-executable, and nothing else on the machine is touched.
+No installer, no dependencies - but expect Defender to take it away, and read
+the next section before going this way.
+
+Either way, settings are written to `Peek.ini` next to whichever file you run,
+and nothing else on the machine is touched.
+
+## Antivirus false positives
+
+Windows Defender quarantines `Peek.exe` on a good many machines, usually as
+something generic like `Trojan:Win32/Wacatac.B!ml` or
+`Program:Win32/Wacapew.C!ml`. The `!ml` suffix is the tell: that is a
+machine-learning guess, not a signature match against known malware.
+
+The guess is not a mystery either. A compiled AutoHotkey script is the
+AutoHotkey interpreter and the script itself bundled into one unsigned
+executable, which is a shape plenty of real malware also has. Then Peek goes
+and does, in order: a global keyboard hotkey, a walk of every process on the
+machine, per-process network counters that need elevation, a scheduled task for
+autostart, and an update that downloads an executable and overwrites itself.
+Every one of those is a heuristic trigger on its own. What settles it in the end
+is reputation - a code-signing certificate and enough downloads of the same
+binary for Defender to have an opinion about it. Peek has neither; AutoHotkey's
+interpreter has the second, which is why running the script sidesteps all of
+this.
+
+Pick whichever of these suits you.
+
+**Run `Peek.ahk` instead.** The route above. No compiled executable, so there is
+nothing to flag. This is the recommendation if you simply want it working.
+
+**Check the file, then exclude it.** Every release publishes a SHA-256 for
+`Peek.exe` - the same digest Peek's own updater verifies before it replaces
+anything. Confirm your copy matches it first:
+
+```powershell
+Get-FileHash .\Peek.exe -Algorithm SHA256
+```
+
+If it matches, restore the file and exclude it: **Windows Security** -> **Virus
+& threat protection** -> **Protection history** -> the Peek entry ->
+**Actions** -> **Restore**, then **Virus & threat protection settings** ->
+**Manage settings** -> **Exclusions** -> **Add an exclusion**. Exclude the
+folder you keep Peek in rather than the one file, or the next update will be
+quarantined as a new file. If you use the updater, the download lands in
+`%TEMP%\Peek-update` first.
+
+An exclusion is a real hole in your protection, so keep it to that one folder,
+and do not take this step on the word of a README - the hash check above is
+there so you do not have to.
+
+**Report it to Microsoft.** A [false-positive
+submission](https://www.microsoft.com/en-us/wdsi/filesubmission) is what gets a
+detection withdrawn for everybody rather than just for you. Pick "Microsoft
+Defender Antivirus", then "Incorrectly detected as malware", and attach the
+file. Turnaround is usually a day or two.
+
+**Build it yourself.** See [Build from source](#build-from-source). An
+executable compiled on your own machine can still be flagged, but you know
+exactly what went into it.
 
 ## Use
 
@@ -88,6 +164,10 @@ Requires [AutoHotkey v2](https://www.autohotkey.com/).
 "C:\Program Files\AutoHotkey\Compiler\Ahk2Exe.exe" /in Peek.ahk /out Peek.exe ^
     /base "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
 ```
+
+No `/compress`. A UPX- or MPRESS-packed AutoHotkey binary is flagged harder
+than a plain one, and the megabyte it saves is not worth it. Releases are built
+exactly as above.
 
 ## License
 
