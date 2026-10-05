@@ -14,7 +14,9 @@ to object to the compiled executable. They are the same program either way.
 
 1. Install [AutoHotkey v2](https://www.autohotkey.com/) - the installer from
    autohotkey.com, nothing else.
-2. Download [`Peek.ahk`](Peek.ahk) from this repository.
+2. Download `Peek.ahk` - either from the
+   [latest release](../../releases/latest) or
+   [straight out of this repository](Peek.ahk).
 3. Double-click it.
 
 That is all of it. `Peek.ahk` is a text file, and the executable that runs it is
@@ -35,57 +37,35 @@ and nothing else on the machine is touched.
 
 ## Antivirus false positives
 
-Windows Defender quarantines `Peek.exe` on a good many machines, usually as
-something generic like `Trojan:Win32/Wacatac.B!ml` or
-`Program:Win32/Wacapew.C!ml`. The `!ml` suffix is the tell: that is a
-machine-learning guess, not a signature match against known malware.
+Windows Defender deletes `Peek.exe` on a good many machines, usually calling it
+something like `Trojan:Win32/Wacatac.B!ml`. The `!ml` on the end is the tell: a
+machine guessed. It is not a match against any known malware.
 
-The guess is not a mystery either. A compiled AutoHotkey script is the
-AutoHotkey interpreter and the script itself bundled into one unsigned
-executable, which is a shape plenty of real malware also has. Then Peek goes
-and does, in order: a global keyboard hotkey, a walk of every process on the
-machine, per-process network counters that need elevation, a scheduled task for
-autostart, and an update that downloads an executable and overwrites itself.
-Every one of those is a heuristic trigger on its own. What settles it in the end
-is reputation - a code-signing certificate and enough downloads of the same
-binary for Defender to have an opinion about it. Peek has neither; AutoHotkey's
-interpreter has the second, which is why running the script sidesteps all of
-this.
+In plain terms: Peek is a small script, and `Peek.exe` is that script glued
+together with the program that runs scripts, in one file nobody paid to sign.
+Peek then listens for a hotkey, looks at every program running, reads how much
+network each one is using, starts itself at logon, and replaces its own file
+when it updates. All of that is ordinary for a tool like this - and all of it is
+also what a snooping program would do. Defender cannot tell the two apart from
+the outside, so it guesses, and sometimes it guesses wrong.
 
-Pick whichever of these suits you.
+No change to the code fixes that; a code-signing certificate would, and Peek has
+none. So pick whichever of these suits you:
 
-**Run `Peek.ahk` instead.** The route above. No compiled executable, so there is
-nothing to flag. This is the recommendation if you simply want it working.
-
-**Check the file, then exclude it.** Every release publishes a SHA-256 for
-`Peek.exe` - the same digest Peek's own updater verifies before it replaces
-anything. Confirm your copy matches it first:
-
-```powershell
-Get-FileHash .\Peek.exe -Algorithm SHA256
-```
-
-If it matches, restore the file and exclude it: **Windows Security** -> **Virus
-& threat protection** -> **Protection history** -> the Peek entry ->
-**Actions** -> **Restore**, then **Virus & threat protection settings** ->
-**Manage settings** -> **Exclusions** -> **Add an exclusion**. Exclude the
-folder you keep Peek in rather than the one file, or the next update will be
-quarantined as a new file. If you use the updater, the download lands in
-`%TEMP%\Peek-update` first.
-
-An exclusion is a real hole in your protection, so keep it to that one folder,
-and do not take this step on the word of a README - the hash check above is
-there so you do not have to.
-
-**Report it to Microsoft.** A [false-positive
-submission](https://www.microsoft.com/en-us/wdsi/filesubmission) is what gets a
-detection withdrawn for everybody rather than just for you. Pick "Microsoft
-Defender Antivirus", then "Incorrectly detected as malware", and attach the
-file. Turnaround is usually a day or two.
-
-**Build it yourself.** See [Build from source](#build-from-source). An
-executable compiled on your own machine can still be flagged, but you know
-exactly what went into it.
+- **Run `Peek.ahk` instead** - see Install above. No executable, nothing to
+  flag. This is the easy answer.
+- **Check it, then exclude it.** Compare your copy against the SHA-256 on the
+  release page: `Get-FileHash .\Peek.exe -Algorithm SHA256`. If it matches,
+  restore the file in **Windows Security** -> **Protection history**, then add
+  Peek's *folder* to **Exclusions**. The folder, not the file - otherwise the
+  next update is flagged as a new file. An exclusion is a real hole in your
+  protection, so keep it to that one folder, and do not take the step on the
+  word of a README: the hash check is there so you do not have to.
+- **Report it** on [Microsoft's false-positive
+  form](https://www.microsoft.com/en-us/wdsi/filesubmission) - "Microsoft
+  Defender Antivirus", "Incorrectly detected as malware". That gets the
+  detection dropped for everybody, not just for you.
+- **Build it yourself** - see [Build from source](#build-from-source).
 
 ## Use
 
@@ -134,7 +114,8 @@ ask for consent once when the task exists, or when Peek sits somewhere its own
 folder is not writable.
 
 Running from `Peek.ahk` rather than the compiled exe, there is nothing to
-replace: the release page is opened instead.
+replace: the release page is opened instead, and `Peek.ahk` is attached there
+alongside `Peek.exe` so the newer script is one download away.
 
 ## Administrator rights
 
