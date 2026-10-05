@@ -103,6 +103,10 @@ avoids the question entirely.
 
 ## Use
 
+- The first launch puts a small note beside the tray icon to say Peek is there
+  and running. There is nothing else to see until the hotkey is pressed, so it
+  would otherwise look like nothing had started. It appears once, and goes on
+  its own.
 - **Ctrl + Shift + X** toggles the overlay. The combination is changeable.
 - Right-click the tray icon for: Peek now, Settings, Check for updates, Restart
   as administrator, Reload, Exit. Everything else lives in the settings window.

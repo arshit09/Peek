@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetCompanyName Arshit Vaghasiya
 ;@Ahk2Exe-SetCopyright Copyright (C) 2026 Arshit Vaghasiya - GPL-3.0-or-later
 ;@Ahk2Exe-SetOrigFilename Peek.exe
-;@Ahk2Exe-SetVersion 1.2.0.0
+;@Ahk2Exe-SetVersion 1.3.0.0
 ; Compile without /compress. A UPX- or MPRESS-packed AutoHotkey binary is what
 ; antivirus heuristics flag hardest, and the filled-in fields above are there so
 ; the executable at least carries a complete version-info resource. Neither is a
@@ -122,7 +122,7 @@ global INI    := A_ScriptDir "\Peek.ini"
 ; (section 13) compares against the tag of the newest GitHub release. These are
 ; up here with the other constants rather than down with the updater because the
 ; startup code in section 5 reads them.
-global APPVER  := "1.2.0"
+global APPVER  := "1.3.0"
 global REPO    := "arshit09/Peek"
 global UPD_API := "https://api.github.com/repos/" REPO "/releases/latest"
 global UPD_UA  := "Peek/" APPVER
@@ -265,6 +265,19 @@ CleanupUpdateFiles()
 ArmUpdateTimer()
 OnExit((*) => SaveSettings())
 
+; A first launch says where Peek went. Marked as said before it is said, and
+; written out there and then rather than at exit, so a crash or a kill cannot
+; turn the next launch into a second first one. WG is declared here rather than
+; beside the functions below, because this is the line that reaches them: the
+; auto-execute section runs top to bottom, so a declaration further down the
+; file would still be unassigned by the time Greet() reads it.
+global WG := ""                 ; the greeting, while it is on screen
+if !Cfg.welcomed {
+    Cfg.welcomed := 1
+    SaveSettings()
+    Greet()
+}
+
 ; One timer, two speeds: overlay open -> fast enough for smooth rates; overlay
 ; closed -> just often enough to keep the totals honest. Costs one TCP table
 ; scan per tick (a couple of ms), or nothing at all if background tracking is off.
@@ -344,6 +357,95 @@ Pretty(hk) {
         out .= NAMES[A_LoopField]
     }
     return out
+}
+
+;--- the first-run greeting ----------------------------------------------------
+; Peek has no window of its own until the hotkey is pressed, so a first launch
+; looks like nothing happening at all: the thing starts, puts an icon in the
+; notification area and waits. This says so once, beside the icon it is talking
+; about, and the ini remembers that it has been said.
+;
+; Not a MsgBox: that has to be dismissed before Peek can be used, and the first
+; thing Peek does should not be to get in the way. Not TrayTip either - that
+; hands the text to the Windows notification system, where Focus assist, quiet
+; hours or a per-app toggle can swallow it without a trace, and the one message
+; that has to arrive is this one. So it is a small window of Peek's own: it
+; cannot be suppressed, it never takes focus, and it closes itself. WG, which
+; holds it while it is on screen, is declared up in the startup code: that is
+; what calls Greet(), and a global assigned further down the file than its first
+; use has not been assigned at all when the time comes.
+
+Greet() {
+    global WG
+    CloseGreeting()
+    bg  := Cfg.dark ? "1C1C1C" : "FFFFFF"
+    fg  := Cfg.dark ? "E8E8E8" : "202020"
+    dim := Cfg.dark ? "A8A8A8" : "5A5A5A"
+    ; Same shape as the overlay: no title bar, never activated, out of Alt-Tab,
+    ; with a hairline border so it reads as a panel rather than a floating blob.
+    WG := Gui("-Caption +AlwaysOnTop +ToolWindow +E0x08000000 +0x800000", "Peek")
+    WG.BackColor := bg
+    WG.SetFont("s9", "Segoe UI")
+    if ico := IconFile()
+        try WG.AddPicture("x16 y16 w32 h32 Icon1", ico)
+    WG.SetFont("s12 bold c" fg)
+    WG.AddText("x60 y14 w266 h24 BackgroundTrans", "Peek is running")
+    WG.SetFont("s9 norm c" dim)
+    WG.AddText("x60 y42 w266 h54 BackgroundTrans"
+             , "It stays in the system tray, out of the way. Press "
+             . Pretty(Cfg.hotkey) " for the overlay, or right-click the tray"
+             . " icon for settings.")
+    WG.AddButton("x158 y104 w84 h26", "Settings...")
+      .OnEvent("Click", (*) => (CloseGreeting(), ShowSettings()))
+    WG.AddButton("x250 y104 w84 h26", "Got it")
+      .OnEvent("Click", (*) => CloseGreeting())
+    GreetPosition(342, 144)
+    SetTimer(CloseGreeting, -15000)
+}
+
+; Beside the notification area, on whichever side of the taskbar has the room.
+GreetPosition(w, h) {
+    if TrayRect(&tx, &ty, &tw, &th) {
+        GetWorkArea(tx + tw // 2, ty + th // 2, &l, &t, &r, &b)
+        x := tx + tw - w
+        y := ty > (t + b) // 2 ? ty - h - 12 : ty + th + 12
+    } else {
+        MonitorGetWorkArea(MonitorGetPrimary(), &l, &t, &r, &b)
+        x := r - w - 16
+        y := b - h - 16
+    }
+    x := Max(l, Min(x, r - w))
+    y := Max(t, Min(y, b - h))
+    WG.Show("NoActivate x" x " y" y " w" w " h" h)
+}
+
+; Where the notification area actually is. The taskbar can sit on any edge of
+; any monitor, so this asks the shell for the rectangle rather than assuming the
+; bottom right corner. GetWindowRect rather than WinGetPos because TrayNotifyWnd
+; is a child window, which the window functions are not obliged to match.
+; Returns false when the shell does not answer, and the caller falls back on the
+; primary monitor's corner.
+TrayRect(&x, &y, &w, &h) {
+    if !(shell := DllCall("FindWindow", "Str", "Shell_TrayWnd", "Ptr", 0, "Ptr"))
+        return false
+    if !(notify := DllCall("FindWindowEx", "Ptr", shell, "Ptr", 0
+                         , "Str", "TrayNotifyWnd", "Ptr", 0, "Ptr"))
+        return false
+    rc := Buffer(16, 0)
+    if !DllCall("GetWindowRect", "Ptr", notify, "Ptr", rc)
+        return false
+    x := NumGet(rc, 0, "Int"), y := NumGet(rc, 4, "Int")
+    w := NumGet(rc, 8, "Int") - x, h := NumGet(rc, 12, "Int") - y
+    return w > 0 && h > 0
+}
+
+CloseGreeting() {
+    global WG
+    if WG {
+        try WG.Destroy()
+        WG := ""
+    }
+    return true
 }
 
 ;-------------------------------------------------------------------------------
@@ -1335,7 +1437,7 @@ LoadSettings() {
     c := { hotkey: "^+x", sortKey: "netTot", cols: "netIn,netOut,netTot,sessTot", count: 10
          , duration: 5000, interval: 700, follow: 1, group: 1, dark: 1
          , icons: 1, askElevate: 1, bgTrack: 1, bgInterval: 2000
-         , autoUpdate: 1, skipVer: "", lastCheck: "" }
+         , autoUpdate: 1, skipVer: "", lastCheck: "", welcomed: 0 }
     try {
         c.hotkey     := IniRead(INI, "Peek", "Hotkey", "^+x")
         c.sortKey    := IniRead(INI, "Peek", "SortKey", "netTot")
@@ -1353,6 +1455,11 @@ LoadSettings() {
         c.autoUpdate := Integer(IniRead(INI, "Peek", "AutoUpdate", 1))
         c.skipVer    := IniRead(INI, "Peek", "SkipVersion", "")
         c.lastCheck  := IniRead(INI, "Peek", "LastCheck", "")
+        ; An ini written before this line existed has no Welcomed in it, but the
+        ; file itself is proof of an earlier run: only a machine with no ini at
+        ; all is seeing Peek for the first time.
+        c.welcomed   := Integer(IniRead(INI, "Peek", "Welcomed"
+                              , FileExist(INI) ? 1 : 0))
     }
     ok := false
     for s in SORTS
@@ -1394,6 +1501,7 @@ SaveSettings() {
         IniWrite(Cfg.autoUpdate, INI, "Peek", "AutoUpdate")
         IniWrite(Cfg.skipVer,    INI, "Peek", "SkipVersion")
         IniWrite(Cfg.lastCheck,  INI, "Peek", "LastCheck")
+        IniWrite(Cfg.welcomed,   INI, "Peek", "Welcomed")
     }
 }
 
@@ -2123,19 +2231,29 @@ DressDialog(title, tries) {
 ApplyScriptIcon() {
     if A_IsCompiled                              ; already in its own resources
         return
+    if ico := IconFile()
+        try TraySetIcon(ico)
+}
+
+; The best path to Peek's icon for anything that wants a file rather than the
+; copy the tray is already holding - the greeting in section 5 needs one too.
+; Compiled, that is the executable itself: its first icon resource is the one
+; Ahk2Exe embedded. Returns "" when even the temporary copy cannot be written.
+IconFile() {
+    if A_IsCompiled
+        return A_ScriptFullPath
     ico := A_ScriptDir "\Peek.ico"               ; the repository checkout
+    if FileExist(ico)
+        return ico
+    ico := A_Temp "\Peek-icon-" APPVER ".ico"
     if !FileExist(ico) {
-        ico := A_Temp "\Peek-icon-" APPVER ".ico"
-        if !FileExist(ico) {
-            try {
-                f := FileOpen(ico, "w")
-                f.RawWrite(B64Decode(IconData()))
-                f.Close()
-            }
+        try {
+            f := FileOpen(ico, "w")
+            f.RawWrite(B64Decode(IconData()))
+            f.Close()
         }
     }
-    if FileExist(ico)
-        try TraySetIcon(ico)
+    return FileExist(ico) ? ico : ""
 }
 
 ; CryptStringToBinary rather than arithmetic of my own: it ships with every
