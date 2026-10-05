@@ -65,4 +65,6 @@ Requires [AutoHotkey v2](https://www.autohotkey.com/).
 
 ## License
 
-MIT
+[GNU General Public License v3.0](LICENSE). Use it anywhere, commercially or
+privately, and modify it however you like. If you distribute it or anything
+derived from it, the source has to be published under the same license.

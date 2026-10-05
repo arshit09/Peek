@@ -12,6 +12,15 @@
 ;===============================================================================
 ;  Peek  -  press a hotkey, get an instant overlay of the top processes
 ;
+;  Copyright (C) 2026  Arshit Vaghasiya
+;
+;  This program is free software: you can redistribute it and/or modify it
+;  under the terms of the GNU General Public License as published by the Free
+;  Software Foundation, either version 3 of the License, or (at your option)
+;  any later version. It is distributed WITHOUT ANY WARRANTY; without even the
+;  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+;  See the GNU General Public License (LICENSE) for details.
+;
 ;  DEFAULT HOTKEY:  Ctrl + Shift + X       (changeable in the settings window)
 ;
 ;  The overlay appears next to the mouse, refreshes itself while it is up, and
