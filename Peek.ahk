@@ -8,7 +8,7 @@
 ;@Ahk2Exe-SetName Peek
 ;@Ahk2Exe-SetDescription Peek - instant top-process overlay
 ;@Ahk2Exe-SetProductName Peek
-;@Ahk2Exe-SetVersion 1.0.0.0
+;@Ahk2Exe-SetVersion 1.1.0.0
 ;===============================================================================
 ;  Peek  -  press a hotkey, get an instant overlay of the top processes
 ;
@@ -26,7 +26,8 @@
 ;  The overlay appears next to the mouse, refreshes itself while it is up, and
 ;  disappears on its own. Everything else is a dialog: right-click the tray icon
 ;  and pick "Settings...". The tray menu itself only carries what a dialog
-;  cannot do - Peek now, Settings, Restart as administrator, Reload, Exit.
+;  cannot do - Peek now, Settings, Check for updates, Restart as administrator,
+;  Reload, Exit.
 ;
 ;  IN THE SETTINGS WINDOW:
 ;    Hotkey .......... captured by pressing the combination you want
@@ -47,6 +48,8 @@
 ;                      Startup-folder shortcut cannot do that - Windows has no
 ;                      "remember this" for consent, so it would ask at every
 ;                      boot. Ticking the box asks once; booting never asks.
+;    Updates ......... whether to ask GitHub once a day for a newer release,
+;                      and a "Check now" button that asks straight away
 ;
 ;  COST WHEN IDLE: the process table is only read while the overlay is on
 ;  screen. The one thing that does run in the background is a TCP scan every
@@ -55,8 +58,19 @@
 ;  closed" in the settings window for literally zero idle cost - the totals then
 ;  only count while the overlay is open.
 ;
-;  SELF-CONTAINED: no #Include, no other script is read or launched, and the
-;  only file touched is Peek.ini next to this one (Peek.exe when compiled).
+;  SELF-CONTAINED: no #Include, and the only file touched in normal use is
+;  Peek.ini next to this one (Peek.exe when compiled). Updating is the exception
+;  and only while it is happening: it runs curl or PowerShell to fetch, certutil
+;  to hash, and a generated PowerShell script to put the new executable in place
+;  once Peek has exited, all out of a folder in %TEMP% that is removed at the
+;  next start.
+;
+;  UPDATES: the newest GitHub release is compared with APPVER, and its Peek.exe
+;  is checked against the size and SHA-256 that GitHub publishes before anything
+;  is replaced. The previous executable is kept as Peek.exe.old until the new one
+;  has started. A "Start with Windows" task is re-registered for the new
+;  executable as part of the same step, which is also why the update may ask for
+;  administrator rights once. Section 13 has the detail.
 ;
 ;  ADMIN: per-process network needs elevation (the TCP EStats API refuses to
 ;  enable collection otherwise). Memory, disk and CPU work fine without it.
@@ -95,6 +109,17 @@ global SORTS := [ { key: "netTot",  title: "Network (rate)"   }
 global DURS   := [3000, 5000, 10000, 0]        ; 0 = until the hotkey is pressed again
 global COUNTS := [5, 10, 15, 20]
 global INI    := A_ScriptDir "\Peek.ini"
+
+; Peek's own version and where its releases live. APPVER has to match the
+; Ahk2Exe-SetVersion directive at the top of the file - it is what the updater
+; (section 13) compares against the tag of the newest GitHub release. These are
+; up here with the other constants rather than down with the updater because the
+; startup code in section 5 reads them.
+global APPVER  := "1.1.0"
+global REPO    := "arshit09/Peek"
+global UPD_API := "https://api.github.com/repos/" REPO "/releases/latest"
+global UPD_UA  := "Peek/" APPVER
+global UPD_DIR := A_Temp "\Peek-update"
 
 global gFreq := 0
 DllCall("QueryPerformanceFrequency", "Int64*", &gFreq)
@@ -221,6 +246,10 @@ if gNetOK {
     SampleNetwork(0)
     ApplyNetTimer()
 }
+; Getting this far means the executable runs, so the copy an update kept as a
+; fallback is no longer needed. The daily check is armed for a minute from now.
+CleanupUpdateFiles()
+ArmUpdateTimer()
 OnExit((*) => SaveSettings())
 
 ; One timer, two speeds: overlay open -> fast enough for smooth rates; overlay
@@ -263,6 +292,7 @@ BuildTray() {
     tray.Add("Settings...", (*) => ShowSettings())
     tray.Default := "Peek now"
     tray.Add()
+    tray.Add("Check for updates...", (*) => CheckForUpdates("manual"))
     if !A_IsAdmin
         tray.Add("Restart as administrator", (*) => Elevate())
     tray.Add("Reload", (*) => Reload())
@@ -337,7 +367,12 @@ ShowSettings() {
     hkY   := 8 + colsH + 10
     adY   := hkY + 120
     adH   := A_IsAdmin ? 76 : 112
-    btnY  := Max(438, adY + adH) + 12
+    ; The updates box goes under the network one in the right column rather than
+    ; under "Start with Windows" in the left: the right column is the shorter of
+    ; the two, so putting it there costs the window the least extra height.
+    updY  := adY + adH + 8
+    updH  := 86
+    btnY  := Max(438, updY + updH) + 12
 
     SG   := Gui("+AlwaysOnTop +OwnDialogs -MinimizeBox -MaximizeBox", "Peek settings")
     SGc  := {}
@@ -436,6 +471,17 @@ ShowSettings() {
         SG.AddButton("x320 y" (adY + 72) " w222 h28", "Restart as administrator")
           .OnEvent("Click", (*) => (ApplySettings() && Elevate()))
 
+    ;--- updates ---------------------------------------------------------------
+    ; "Check now" applies first, so the box next to it is already saved and a
+    ; version skipped earlier does not silence a check that was just asked for.
+    SG.AddGroupBox("x306 y" updY " w250 h" updH, "Updates")
+    SGc.autoUpdate := SG.AddCheckbox("x320 y" (updY + 22) " w222 h22",
+                                     "Check GitHub for a new release daily")
+    SGc.autoUpdate.Value := Cfg.autoUpdate
+    SG.AddText("x320 y" (updY + 50) " w100 h24 +0x200", "Version " APPVER)
+    SG.AddButton("x426 y" (updY + 48) " w116 h26", "Check now")
+      .OnEvent("Click", (*) => (ApplySettings() && CheckForUpdates("manual")))
+
     ;--- buttons ---------------------------------------------------------------
     ; Bottom left, away from OK/Cancel/Apply so it never gets hit by accident.
     SG.AddButton("x10 y" btnY " w254 h28", "Check out more tech stuff @geek_updates")
@@ -497,6 +543,7 @@ ApplySettings() {
     Cfg.dark       := SGc.dark.Value
     Cfg.bgTrack    := SGc.bgTrack.Value
     Cfg.askElevate := SGc.askElevate.Value
+    Cfg.autoUpdate := SGc.autoUpdate.Value
 
     ; A system-wide change, so like everything else here it waits for OK or
     ; Apply - and the checkbox is re-synced from the task afterwards, because
@@ -518,6 +565,7 @@ ApplySettings() {
 
     BuildTip()                                   ; theme
     ApplyNetTimer()                              ; bgTrack / both intervals
+    ArmUpdateTimer()                             ; autoUpdate
     SetTimer(FollowCursor, (Cfg.follow && gVisible) ? 30 : 0)
     if gVisible {
         SetTimer(UpdatePeek, Cfg.interval)
@@ -1273,7 +1321,8 @@ JoinArr(a, sep) {
 LoadSettings() {
     c := { hotkey: "^+x", sortKey: "netTot", cols: "netIn,netOut,netTot,sessTot", count: 10
          , duration: 5000, interval: 700, follow: 1, group: 1, dark: 1
-         , icons: 1, askElevate: 1, bgTrack: 1, bgInterval: 2000 }
+         , icons: 1, askElevate: 1, bgTrack: 1, bgInterval: 2000
+         , autoUpdate: 1, skipVer: "", lastCheck: "" }
     try {
         c.hotkey     := IniRead(INI, "Peek", "Hotkey", "^+x")
         c.sortKey    := IniRead(INI, "Peek", "SortKey", "netTot")
@@ -1288,6 +1337,9 @@ LoadSettings() {
         c.askElevate := Integer(IniRead(INI, "Peek", "AskElevate", 1))
         c.bgTrack    := Integer(IniRead(INI, "Peek", "BgTrack", 1))
         c.bgInterval := Integer(IniRead(INI, "Peek", "BgInterval", 2000))
+        c.autoUpdate := Integer(IniRead(INI, "Peek", "AutoUpdate", 1))
+        c.skipVer    := IniRead(INI, "Peek", "SkipVersion", "")
+        c.lastCheck  := IniRead(INI, "Peek", "LastCheck", "")
     }
     ok := false
     for s in SORTS
@@ -1326,5 +1378,644 @@ SaveSettings() {
         IniWrite(Cfg.askElevate, INI, "Peek", "AskElevate")
         IniWrite(Cfg.bgTrack,    INI, "Peek", "BgTrack")
         IniWrite(Cfg.bgInterval, INI, "Peek", "BgInterval")
+        IniWrite(Cfg.autoUpdate, INI, "Peek", "AutoUpdate")
+        IniWrite(Cfg.skipVer,    INI, "Peek", "SkipVersion")
+        IniWrite(Cfg.lastCheck,  INI, "Peek", "LastCheck")
     }
+}
+
+;-------------------------------------------------------------------------------
+; 13. Updates
+;-------------------------------------------------------------------------------
+; Asks GitHub for the newest release, compares its tag with APPVER, downloads
+; the Peek.exe asset from it and swaps it in. A running executable cannot
+; overwrite itself, so the swap is done by a short PowerShell helper that waits
+; for this process to exit, renames the old file aside, moves the new one into
+; its place, re-registers the logon task when there is one, and starts Peek
+; again.
+;
+; Transfers run in a separate process (curl, or PowerShell where curl is
+; missing) that writes to a file in %TEMP%, and Peek polls that file. A
+; synchronous WinHttp call would have been fewer lines but would freeze the tray
+; icon and the hotkey for the whole transfer, and the file on disk is a
+; byte-accurate progress bar for nothing.
+;
+; Checked before anything on disk is touched: the release is neither a draft nor
+; a prerelease, its tag parses as a version newer than this one, the asset is a
+; .exe, its size and SHA-256 match what GitHub publishes for it, and it starts
+; with "MZ". Nothing is replaced unless all of that holds.
+
+global UPD_EVERY := 24 * 60 * 60   ; seconds between automatic checks
+global gJob      := ""             ; the transfer in flight, "" when idle
+global gUpdWhy   := "manual"       ; "auto" keeps a pointless or failed check quiet
+global gUpdRel   := ""             ; the release being installed
+global UG        := ""             ; "update available" window while it is open
+global PG        := ""             ; download progress window while it is open
+global PGbar     := "", PGtxt := ""
+
+RepoUrl() => "https://github.com/" REPO
+
+;--- version numbers -----------------------------------------------------------
+; "v1.2.3" -> [1,2,3]. Parsing stops at the first part that is not a number, so
+; a tag like "v1.2.0-beta" compares as 1.2.0 and the prerelease flag in the
+; release itself is what keeps it out of the way.
+VerParts(v) {
+    out := []
+    for p in StrSplit(RegExReplace(v, "^\s*[vV]"), ".")
+        if RegExMatch(p, "^(\d+)", &m)
+            out.Push(Integer(m[1]))
+        else
+            break
+    return out
+}
+
+; -1 when a is older, 0 when they are the same, 1 when a is newer. A missing
+; trailing part counts as zero, so 1.2 and 1.2.0 are the same version.
+VerCompare(a, b) {
+    pa := VerParts(a), pb := VerParts(b)
+    Loop Max(pa.Length, pb.Length) {
+        x := pa.Has(A_Index) ? pa[A_Index] : 0
+        y := pb.Has(A_Index) ? pb[A_Index] : 0
+        if x != y
+            return x < y ? -1 : 1
+    }
+    return 0
+}
+
+;--- transfers -----------------------------------------------------------------
+; kind is "check" or "download" and decides who is told when the child process
+; is gone. Returns false when a transfer is already running or no helper could
+; be started; the caller says so, because what to say depends on the kind.
+StartFetch(kind, url, out, hdrs, size := 0) {
+    global gJob
+    if gJob
+        return false
+    try DirCreate(UPD_DIR)
+    try FileDelete(out)
+    if !(pid := SpawnFetch(url, out, hdrs))
+        return false
+    gJob := { kind: kind, pid: pid, out: out, size: size, started: A_TickCount }
+    SetTimer(FetchTick, 150)
+    return true
+}
+
+; curl.exe has shipped with Windows since 10 1803 and needs no temporary script,
+; so it is tried first; PowerShell is the fallback for anything older. Either
+; way the transfer is a hidden child process.
+SpawnFetch(url, out, hdrs) {
+    pid := 0
+    curl := A_WinDir "\System32\curl.exe"
+    if FileExist(curl) {
+        cmd := '"' curl '" -sS -L --fail --connect-timeout 15 --max-time 600'
+             . ' -A "' UPD_UA '"'
+        for h in hdrs
+            cmd .= ' -H "' h '"'
+        cmd .= ' -o "' out '" "' url '"'
+        try {
+            Run(cmd, UPD_DIR, "Hide", &pid)
+            return pid
+        }
+    }
+    ps := UPD_DIR "\fetch.ps1"
+    try FileDelete(ps)
+    body := "$ErrorActionPreference = 'Stop'`r`n"
+          . "try { [Net.ServicePointManager]::SecurityProtocol = 3072 } catch { }`r`n"
+          . "$c = New-Object Net.WebClient`r`n"
+          . "$c.Headers.Add('User-Agent', '" PsQ(UPD_UA) "')`r`n"
+    for h in hdrs {
+        p := StrSplit(h, ":", " ", 2)
+        if p.Length = 2
+            body .= "$c.Headers.Add('" PsQ(p[1]) "', '" PsQ(p[2]) "')`r`n"
+    }
+    body .= "$c.DownloadFile('" PsQ(url) "', '" PsQ(out) "')`r`n"
+    try {
+        FileAppend(body, ps, "UTF-8")
+        Run('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden'
+          . ' -File "' ps '"', UPD_DIR, "Hide", &pid)
+        return pid
+    }
+    return 0
+}
+
+; A PowerShell single-quoted string escapes a quote by doubling it and treats
+; everything else literally, which is why every value handed to a generated
+; script goes inside one.
+PsQ(s) => StrReplace(s, "'", "''")
+
+; The child process disappearing is the only signal that a transfer has
+; finished, so the file is read after it is gone rather than guessed at while it
+; is still being written.
+FetchTick() {
+    global gJob
+    if !gJob {
+        SetTimer(FetchTick, 0)
+        return
+    }
+    got := 0
+    try got := FileGetSize(gJob.out)
+    UpdProgress(got, gJob.size)
+    if ProcessExist(gJob.pid) {
+        if A_TickCount - gJob.started < 900000      ; 15 minutes is long enough
+            return
+        kind := gJob.kind
+        CancelFetch()
+        if kind = "download"
+            MsgBox "The download did not finish within 15 minutes and was"
+                 . " stopped.`n`nNothing has been changed.",
+                   "Peek - update", "Icon! 0x1000"
+        else
+            UpdFail("GitHub did not answer in time.")
+        return
+    }
+    SetTimer(FetchTick, 0)
+    job := gJob, gJob := ""
+    if job.kind = "check"
+        CheckArrived(job)
+    else
+        DownloadArrived(job)
+}
+
+CancelFetch() {
+    global gJob
+    if gJob {
+        try ProcessClose(gJob.pid)
+        try FileDelete(gJob.out)
+        gJob := ""
+    }
+    SetTimer(FetchTick, 0)
+    CloseUpdProgress()
+}
+
+;--- checking ------------------------------------------------------------------
+CheckForUpdates(why := "manual") {
+    global gUpdWhy
+    if gJob {
+        if why = "manual"
+            MsgBox "A check is already running.", "Peek - update", "Iconi 0x1000"
+        return
+    }
+    gUpdWhy := why
+    if !StartFetch("check", UPD_API, UPD_DIR "\latest.json",
+                   ["Accept: application/vnd.github+json",
+                    "X-GitHub-Api-Version: 2022-11-28"])
+        UpdFail("Could not start a helper to reach GitHub.`n`nNeither curl.exe"
+              . " nor PowerShell could be run.")
+}
+
+CheckArrived(job) {
+    Cfg.lastCheck := A_Now
+    SaveSettings()
+    txt := ""
+    try txt := FileRead(job.out, "UTF-8")
+    try FileDelete(job.out)
+    if txt = "" {
+        UpdFail("GitHub could not be reached, so there is nothing to compare"
+              . " against.`n`nThe releases are at " RepoUrl() "/releases/latest")
+        return
+    }
+    if !(rel := ParseRelease(txt)) {
+        UpdFail("GitHub answered, but no usable release with a Peek.exe was"
+              . " found in it.`n`nThe releases are at "
+              . RepoUrl() "/releases/latest")
+        return
+    }
+    if VerCompare(rel.ver, APPVER) <= 0 {
+        if gUpdWhy = "manual"
+            MsgBox "Peek " APPVER " is the newest release.", "Peek - up to date",
+                   "Iconi 0x1000"
+        return
+    }
+    ; A skipped version stays quiet on its own, but a check that was asked for
+    ; still shows it - otherwise "Check now" would look broken.
+    if gUpdWhy = "auto" && rel.ver = Cfg.skipVer
+        return
+    ShowUpdateDialog(rel)
+}
+
+UpdFail(msg) {
+    if gUpdWhy = "manual"
+        MsgBox msg, "Peek - update", "Icon! 0x1000"
+}
+
+; A whole JSON parser is not worth carrying for six fields of one document whose
+; shape is pinned by the API version Peek asks for. Returns "" when the answer
+; is not a release that can be installed.
+ParseRelease(j) {
+    if RegExMatch(j, '"draft"\s*:\s*true') || RegExMatch(j, '"prerelease"\s*:\s*true')
+        return ""
+    if !RegExMatch(j, '"tag_name"\s*:\s*"([^"]+)"', &m)
+        return ""
+    tag := JsonStr(m[1])
+    if !VerParts(tag).Length
+        return ""
+    page := RegExMatch(j, '"html_url"\s*:\s*"(https://github\.com/[^"]+/releases/tag/[^"]+)"', &m)
+          ? JsonStr(m[1]) : RepoUrl() "/releases/latest"
+    body := RegExMatch(j, '"body"\s*:\s*"((?:[^"\\]|\\.)*)"', &m) ? JsonStr(m[1]) : ""
+
+    ; Everything below reads from the assets array onwards: the release carries a
+    ; "name" of its own, and one named like a file would otherwise be mistaken
+    ; for an asset. Inside an asset GitHub writes name before size, digest and
+    ; browser_download_url, and the nested uploader object has none of those
+    ; keys, so reading forward from a name cannot stray into another asset.
+    if RegExMatch(j, '"assets"\s*:\s*\[', &m)
+        j := SubStr(j, m.Pos)
+    asset := "", pos := 1
+    while RegExMatch(j, '"name"\s*:\s*"([^"]*\.(?i:exe))"', &m, pos) {
+        pos  := m.Pos + m.Len
+        rest := SubStr(j, pos)
+        if !RegExMatch(rest, '"browser_download_url"\s*:\s*"([^"]+)"', &u)
+            continue
+        a := { name: JsonStr(m[1]), url: JsonStr(u[1]), size: 0, sha: "" }
+        if RegExMatch(rest, '"size"\s*:\s*(\d+)', &s)
+            a.size := Integer(s[1])
+        if RegExMatch(rest, '"digest"\s*:\s*"sha256:([0-9a-fA-F]{64})"', &d)
+            a.sha := StrLower(d[1])
+        if !asset || a.name = "Peek.exe"           ; the real one wins over extras
+            asset := a
+    }
+    if !asset
+        return ""
+    return { ver: RegExReplace(tag, "^\s*[vV]"), tag: tag, page: page
+           , body: body, asset: asset }
+}
+
+; Undoes the string escapes GitHub actually emits. A lone surrogate from \u is
+; dropped rather than paired up: release notes are shown, not round-tripped.
+JsonStr(s) {
+    if !InStr(s, "\")
+        return s
+    out := "", i := 1, n := StrLen(s)
+    while i <= n {
+        if (c := SubStr(s, i, 1)) != "\" {
+            out .= c, i += 1
+            continue
+        }
+        e := SubStr(s, i + 1, 1), i += 2
+        switch e {
+            case "n": out .= "`n"
+            case "r": out .= "`r"
+            case "t": out .= "`t"
+            case "b", "f":                         ; nothing sensible to show
+            case "u":
+                code := SubStr(s, i, 4), i += 4
+                if RegExMatch(code, "^[0-9a-fA-F]{4}$") && (v := Integer("0x" code))
+                    out .= (v >= 0xD800 && v <= 0xDFFF) ? "" : Chr(v)
+            default: out .= e                      ; \" \\ \/ and the unexpected
+        }
+    }
+    return out
+}
+
+;--- the "update available" window ---------------------------------------------
+ShowUpdateDialog(rel) {
+    global UG
+    CloseUpdateDialog()
+    UG := Gui("+AlwaysOnTop +OwnDialogs -MinimizeBox -MaximizeBox",
+              "Peek - update available")
+    UG.SetFont("s9", "Segoe UI")
+    UG.OnEvent("Close",  (*) => CloseUpdateDialog())
+    UG.OnEvent("Escape", (*) => CloseUpdateDialog())
+
+    UG.SetFont("s12 bold")
+    UG.AddText("x14 y12 w452 h26", "Peek " rel.ver " is available")
+    UG.SetFont("s9 norm")
+    UG.AddText("x14 y42 w452 h20", "You are running " APPVER ".    Download: "
+             . rel.asset.name ", " FmtSize(rel.asset.size) ".")
+    UG.AddText("x14 y70 w452 h18", "Release notes")
+    UG.AddEdit("x14 y90 w452 h146 ReadOnly Multi +VScroll"
+             , rel.body != "" ? rel.body : "Nothing was published with this release.")
+
+    UG.AddButton("x14 y248 w150 h28", "Open the release page")
+      .OnEvent("Click", (*) => OpenUrl(rel.page))
+    UG.AddButton("x172 y248 w110 h28", "Skip " rel.ver)
+      .OnEvent("Click", (*) => SkipVersion(rel.ver))
+    UG.AddButton("x290 y248 w84 h28", "Later")
+      .OnEvent("Click", (*) => CloseUpdateDialog())
+    go := UG.AddButton("x382 y248 w84 h28 +Default", "Install")
+    go.OnEvent("Click", (*) => (CloseUpdateDialog(), StartInstall(rel)))
+    UG.Show("w480 h292")
+    go.Focus()          ; or the notes take it and open with everything selected
+}
+
+CloseUpdateDialog() {
+    global UG
+    if UG {
+        try UG.Destroy()
+        UG := ""
+    }
+    return true
+}
+
+; Remembered in the ini, so a version said no to stays quiet across restarts
+; until a newer one appears or the check is run by hand.
+SkipVersion(ver) {
+    Cfg.skipVer := ver
+    SaveSettings()
+    CloseUpdateDialog()
+}
+
+; Run() hands the URL to whatever is registered for https, so it lands in the
+; default browser rather than a hardcoded one.
+OpenUrl(url) {
+    try
+        Run url
+    catch
+        MsgBox "Could not open a browser for:`n`n" url, "Peek", "Icon! 0x1000"
+}
+
+;--- downloading ---------------------------------------------------------------
+StartInstall(rel) {
+    global gUpdRel
+    ; Running from source there is no Peek.exe here to replace, and silently
+    ; writing one next to the script would be a surprise.
+    if !A_IsCompiled {
+        MsgBox "Peek is running from Peek.ahk, so there is no Peek.exe here for"
+             . " the update to replace.`n`nThe new Peek.exe is on the release"
+             . " page, which is about to open; from source, pull the new"
+             . " Peek.ahk and rebuild instead.", "Peek - update", "Iconi 0x1000"
+        OpenUrl(rel.page)
+        return
+    }
+    if gJob {
+        MsgBox "A transfer is already running.", "Peek - update", "Iconi 0x1000"
+        return
+    }
+    gUpdRel := rel
+    ShowUpdProgress(rel)
+    if !StartFetch("download", rel.asset.url, UPD_DIR "\" rel.asset.name, []
+                 , rel.asset.size) {
+        CloseUpdProgress()
+        MsgBox "Could not start a helper to download the update.`n`nNeither"
+             . " curl.exe nor PowerShell could be run.", "Peek - update",
+               "Icon! 0x1000"
+    }
+}
+
+ShowUpdProgress(rel) {
+    global PG, PGbar, PGtxt
+    CloseUpdProgress()
+    PG := Gui("+AlwaysOnTop +OwnDialogs +ToolWindow -MinimizeBox -MaximizeBox",
+              "Peek - downloading")
+    PG.SetFont("s9", "Segoe UI")
+    PG.OnEvent("Close",  (*) => CancelFetch())
+    PG.OnEvent("Escape", (*) => CancelFetch())
+    PG.AddText("x14 y12 w372 h20", "Downloading Peek " rel.ver " from GitHub")
+    PGbar := PG.AddProgress("x14 y38 w372 h18 Range0-1000", 0)
+    PGtxt := PG.AddText("x14 y62 w372 h20", "Starting...")
+    PG.AddButton("x296 y88 w90 h28", "Cancel").OnEvent("Click", (*) => CancelFetch())
+    PG.Show("w400 h128")
+}
+
+UpdProgress(got, total) {
+    if !PG
+        return
+    try {
+        PGbar.Value := total ? Min(1000, Round(got * 1000 / total)) : 0
+        PGtxt.Value := (got ? FmtSize(got) : "0 KB")
+                     . (total ? " of " FmtSize(total) : " so far")
+    }
+}
+
+CloseUpdProgress() {
+    global PG
+    if PG {
+        try PG.Destroy()
+        PG := ""
+    }
+}
+
+DownloadArrived(job) {
+    rel := gUpdRel
+    CloseUpdProgress()
+    if !rel {
+        try FileDelete(job.out)
+        return
+    }
+    if (why := VerifyDownload(job.out, rel.asset)) != "" {
+        try FileDelete(job.out)
+        MsgBox "The download did not arrive intact, so nothing was replaced.`n`n"
+             . why, "Peek - update", "Icon! 0x1000"
+        return
+    }
+    ApplyUpdate(rel, job.out)
+}
+
+; Everything that can be checked without running the file is checked, because
+; what happens next overwrites Peek.exe. The digest is the one that matters -
+; size and the MZ signature only catch a truncated or redirected download.
+VerifyDownload(path, asset) {
+    sz := 0
+    try sz := FileGetSize(path)
+    if !sz
+        return "Nothing was written to disk."
+    if asset.size && sz != asset.size
+        return "It is " sz " bytes, and GitHub lists " asset.size "."
+    try {
+        f := FileOpen(path, "r")
+        a := f.ReadUChar(), b := f.ReadUChar()
+        f.Close()
+        if a != 0x4D || b != 0x5A                  ; "MZ"
+            return "It is not a Windows executable."
+    } catch
+        return "It could not be read back."
+    if asset.sha != "" {
+        if (h := Sha256(path)) = ""
+            return "Its SHA-256 could not be worked out to compare with the one"
+                 . " GitHub publishes."
+        if h != asset.sha
+            return "Its SHA-256 is " SubStr(h, 1, 16) "..., and GitHub publishes"
+                 . " " SubStr(asset.sha, 1, 16) "..."
+    }
+    return ""
+}
+
+; certutil is the one hasher present on every supported Windows. Its output is a
+; header line, the digits, and a success line; older builds print the digits as
+; space-separated byte pairs, which is why the spaces come back out.
+Sha256(path) {
+    tmp := UPD_DIR "\hash.txt"
+    out := ""
+    try FileDelete(tmp)
+    try {
+        RunWait(A_ComSpec ' /c certutil.exe -hashfile "' path '" SHA256 > "' tmp '"'
+              , UPD_DIR, "Hide")
+        out := FileRead(tmp)
+    }
+    try FileDelete(tmp)
+    if RegExMatch(out, "m)^\s*((?:[0-9a-fA-F]{2}[ \t]*){32})\s*$", &m)
+        return StrLower(RegExReplace(m[1], "\s"))
+    return ""
+}
+
+;--- installing ----------------------------------------------------------------
+; The swap itself, which this process cannot do to itself: Windows holds a lock
+; on a running executable. A PowerShell helper is written out, Peek asks once,
+; then exits and leaves the helper to it.
+;
+; Elevation: the helper needs administrator rights when the logon task has to be
+; rewritten, because schtasks will not touch a task without them, or when Peek's
+; own folder is not writable, which is the Program Files case. Deciding it here
+; means one consent prompt for the whole update instead of one per step.
+ApplyUpdate(rel, newFile) {
+    target := A_ScriptFullPath
+    xml    := ""
+    ; The task is rewritten rather than left alone: it is the thing that will
+    ; launch the new executable at the next logon, and regenerating it from the
+    ; running Peek is what repoints it if the exe was renamed or moved since.
+    if TaskExists() {
+        xml := UPD_DIR "\" TASK "-task.xml"
+        try FileDelete(xml)
+        try FileAppend(TaskXml(), xml, "UTF-16")   ; schtasks wants UTF-16 + BOM
+        if !FileExist(xml)
+            xml := ""
+    }
+    needAdmin := !A_IsAdmin && (xml != "" || !DirWritable(A_ScriptDir))
+
+    msg := "Peek " rel.ver " has been downloaded and checked.`n`n"
+         . "Peek will close, the new Peek.exe will be put in place of the"
+         . " current one, and Peek will start again. The previous executable is"
+         . " kept as Peek.exe.old until the new one has started."
+         . (xml != "" ? "`n`nThe 'Start with Windows' task will be re-registered"
+                      . " for the new executable." : "")
+         . (needAdmin ? "`n`nWindows will ask for administrator rights once." : "")
+         . "`n`nInstall it now?"
+    if MsgBox(msg, "Peek - install update", "OkCancel Iconi 0x1000") != "OK" {
+        try FileDelete(newFile)
+        if xml != ""
+            try FileDelete(xml)
+        return
+    }
+
+    if !(ps := WriteUpdater(target, newFile, xml)) {
+        MsgBox "The update helper could not be written to " UPD_DIR
+             . ".`n`nNothing has been changed.", "Peek - update", "Icon! 0x1000"
+        return
+    }
+    cmd := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden'
+         . ' -File "' ps '"'
+    try {
+        SaveSettings()
+        Run((needAdmin ? "*RunAs " : "") cmd, UPD_DIR, "Hide")
+    } catch {
+        MsgBox "The update helper could not be started"
+             . (needAdmin ? ", or the elevation prompt was declined" : "")
+             . ".`n`nNothing has been changed.", "Peek - update", "Icon! 0x1000"
+        return
+    }
+    ExitApp
+}
+
+; Trying is the only reliable test: an ACL can allow or deny in ways the folder
+; attributes do not show.
+DirWritable(dir) {
+    probe := dir "\peek-write-test.tmp"
+    try {
+        FileAppend("x", probe)
+        FileDelete(probe)
+        return true
+    }
+    return false
+}
+
+; PowerShell rather than a batch file: waiting on a pid, retrying a locked move,
+; putting the old file back when the new one will not go in, and calling
+; schtasks - all legible in one script - is not something cmd does well.
+;
+; The paths and the pid are written as assignments above a fixed body, so no
+; value is ever substituted into the middle of the script. The body carries no
+; double quotes on purpose: single-quoted PowerShell strings are literal apart
+; from a doubled quote, which is exactly the escaping PsQ does.
+WriteUpdater(target, newFile, xml) {
+    ps   := UPD_DIR "\install.ps1"
+    head := "$log    = Join-Path $env:TEMP 'Peek-update.log'`n"
+          . "$target = '" PsQ(target)  "'`n"
+          . "$new    = '" PsQ(newFile) "'`n"
+          . "$xml    = '" PsQ(xml)     "'`n"
+          . "$task   = '" PsQ(TASK)    "'`n"
+          . "$ppid   = " DllCall("GetCurrentProcessId", "UInt") "`n"
+    body := "
+(
+# Peek update helper. Written by Peek, runs once, removes itself.
+$ErrorActionPreference = 'Continue'
+$backup = $target + '.old'
+$dir    = Split-Path -Parent $target
+
+function Log($m) {
+((Get-Date).ToString('s') + '  ' + $m) | Out-File -FilePath $log -Append -Encoding utf8
+}
+
+function Restart() {
+Start-Process -FilePath $target -WorkingDirectory $dir
+Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+}
+
+try { Wait-Process -Id $ppid -Timeout 90 -ErrorAction SilentlyContinue } catch { }
+
+$moved = $false
+for ($i = 0; $i -lt 40; $i++) {
+if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
+try { Move-Item -LiteralPath $target -Destination $backup -Force -ErrorAction Stop; $moved = $true; break }
+catch { Start-Sleep -Milliseconds 500 }
+}
+
+if (-not $moved) {
+Log ('Peek was still holding its executable after 20 seconds, so nothing was replaced.')
+Restart
+exit 1
+}
+
+try { Move-Item -LiteralPath $new -Destination $target -Force -ErrorAction Stop }
+catch {
+Log ('The new file could not be moved into place, putting the old one back: ' + $_.Exception.Message)
+Move-Item -LiteralPath $backup -Destination $target -Force -ErrorAction SilentlyContinue
+Restart
+exit 1
+}
+
+if ($xml.Length -gt 0 -and (Test-Path -LiteralPath $xml)) {
+& schtasks.exe /Create /TN $task /XML $xml /F 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) { Log ('schtasks could not re-register the ' + $task + ' task, exit code ' + $LASTEXITCODE + '.') }
+Remove-Item -LiteralPath $xml -Force -ErrorAction SilentlyContinue
+}
+
+Restart
+)"
+    try FileDelete(ps)
+    try {
+        FileAppend(head . body, ps, "UTF-8")
+        return FileExist(ps) ? ps : ""
+    }
+    return ""
+}
+
+;--- housekeeping and the daily check ------------------------------------------
+; Reaching here means this executable started, so the copy the helper kept as a
+; fallback has done its job. The scratch folder goes with it.
+CleanupUpdateFiles() {
+    if A_IsCompiled
+        try FileDelete(A_ScriptFullPath ".old")
+    try DirDelete(UPD_DIR, true)
+}
+
+; Never in the first minute after a logon: the task starts Peek while Windows is
+; still busy, and a transfer then only competes with everything else that wants
+; the disk and the network.
+ArmUpdateTimer() {
+    SetTimer(UpdateTick, 0)
+    if Cfg.autoUpdate
+        SetTimer(UpdateTick, -60000)
+}
+
+UpdateTick() {
+    if !Cfg.autoUpdate
+        return
+    ; The length test is not belt and braces: DateDiff reads a blank timestamp as
+    ; A_Now and answers nothing at all, so a fresh ini - which has no stamp yet -
+    ; would look like a check made this second and never come due.
+    due := true
+    if RegExMatch(Cfg.lastCheck, "^\d{14}$")
+        try due := DateDiff(A_Now, Cfg.lastCheck, "Seconds") >= UPD_EVERY
+    if due
+        CheckForUpdates("auto")
+    SetTimer(UpdateTick, -3600000)                 ; and look again in an hour
 }

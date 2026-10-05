@@ -14,8 +14,8 @@ executable, and nothing else on the machine is touched.
 ## Use
 
 - **Ctrl + Shift + X** toggles the overlay. The combination is changeable.
-- Right-click the tray icon for: Peek now, Settings, Restart as administrator,
-  Reload, Exit. Everything else lives in the settings window.
+- Right-click the tray icon for: Peek now, Settings, Check for updates, Restart
+  as administrator, Reload, Exit. Everything else lives in the settings window.
 
 ## Settings
 
@@ -33,9 +33,32 @@ executable, and nothing else on the machine is touched.
 | Dark theme | Dark or light overlay |
 | Session totals | Whether byte totals keep counting while the overlay is closed |
 | Start with Windows | A logon task that starts Peek already elevated |
+| Updates | Whether to ask GitHub for a newer release once a day, plus "Check now" |
 
 `Net *` columns are live rates. `Sess *` columns are total bytes each process
 has moved since Peek was started.
+
+## Updates
+
+Peek can update itself. "Check for updates" in the tray menu, or "Check now" in
+the settings window, asks GitHub for the newest release; with the box in the
+settings window ticked it also asks once a day on its own and only speaks up
+when there is something newer. Drafts and prereleases are ignored, and a version
+you press **Skip** on stays quiet until a newer one appears.
+
+Pressing **Install** downloads `Peek.exe` from the release, checks it against the
+size and SHA-256 that GitHub publishes for it, and only then replaces the running
+executable. The swap itself is done after Peek exits, because Windows holds a
+lock on a running program, and Peek starts itself again afterwards. The previous
+executable is kept as `Peek.exe.old` until the new one has started.
+
+If "Start with Windows" is on, the logon task is re-registered for the new
+executable in the same step. That needs administrator rights, so an update will
+ask for consent once when the task exists, or when Peek sits somewhere its own
+folder is not writable.
+
+Running from `Peek.ahk` rather than the compiled exe, there is nothing to
+replace: the release page is opened instead.
 
 ## Administrator rights
 
@@ -53,6 +76,9 @@ The process table is only read while the overlay is on screen. The one thing
 that runs in the background is a TCP scan every couple of seconds, and only so
 the `Sess *` totals do not miss bytes moved between peeks. Clear "Keep counting
 while the overlay is closed" in settings for zero idle cost.
+
+The update check is the other thing on a timer, but it is one request a day and
+only if you leave it on.
 
 ## Build from source
 
