@@ -1,0 +1,5 @@
+# runtime settings, written next to the executable
+Peek.ini
+
+# build output - published as a release asset instead
+Peek.exe
