@@ -59,16 +59,47 @@ none. So pick whichever of these suits you:
   flag. This is the easy answer.
 - **Check it, then exclude it.** Compare your copy against the SHA-256 on the
   release page: `Get-FileHash .\Peek.exe -Algorithm SHA256`. If it matches,
-  restore the file in **Windows Security** -> **Protection history**, then add
-  Peek's *folder* to **Exclusions**. The folder, not the file - otherwise the
-  next update is flagged as a new file. An exclusion is a real hole in your
-  protection, so keep it to that one folder, and do not take the step on the
-  word of a README: the hash check is there so you do not have to.
+  restore the file in **Windows Security** -> **Protection history**, then
+  exclude Peek's folder - there is a script for that, below. The folder, not
+  the file, otherwise the next update is flagged as a new file. An exclusion is
+  a real hole in your protection, so keep it to that one folder, and do not
+  take the step on the word of a README: the hash check is there so you do not
+  have to.
 - **Report it** on [Microsoft's false-positive
   form](https://www.microsoft.com/en-us/wdsi/filesubmission) - "Microsoft
   Defender Antivirus", "Incorrectly detected as malware". That gets the
   detection dropped for everybody, not just for you.
 - **Build it yourself** - see [Build from source](#build-from-source).
+
+### The exclusion scripts
+
+Two scripts next to `Peek.exe` do the exclusion for you, so you do not have to
+pick your way through the Windows Security pages:
+
+| | |
+|---|---|
+| `Add-PeekExclusion.ps1` | Tells Defender to leave Peek's folder alone |
+| `Remove-PeekExclusion.ps1` | Puts it back to watching that folder |
+
+Right-click either one and choose **Run with PowerShell**. It asks Windows for
+administrator rights itself and shows you a prompt to accept - changing
+Defender's settings needs them, and nothing happens if you decline. If
+right-clicking does not offer it, open PowerShell and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Add-PeekExclusion.ps1
+```
+
+Each script excludes **the folder it is sitting in**, so keep all of Peek
+together in a folder of its own and run the script from there. It will refuse to
+exclude your Downloads folder, Desktop, user profile or a drive root, because
+excluding one of those would stop Defender looking at a great deal more than
+Peek. Run `Add-PeekExclusion.ps1 -Force` if you genuinely meant one of those.
+
+Neither script touches anything but Defender's exclusion list, and
+`Remove-PeekExclusion.ps1` undoes exactly what the other one added. Once the
+exclusion is gone Defender may quarantine `Peek.exe` again - running `Peek.ahk`
+avoids the question entirely.
 
 ## Use
 
