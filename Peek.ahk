@@ -11,7 +11,7 @@
 ;@Ahk2Exe-SetCompanyName Arshit Vaghasiya
 ;@Ahk2Exe-SetCopyright Copyright (C) 2026 Arshit Vaghasiya - GPL-3.0-or-later
 ;@Ahk2Exe-SetOrigFilename Peek.exe
-;@Ahk2Exe-SetVersion 1.3.0.0
+;@Ahk2Exe-SetVersion 1.3.1.0
 ; Compile without /compress. A UPX- or MPRESS-packed AutoHotkey binary is what
 ; antivirus heuristics flag hardest, and the filled-in fields above are there so
 ; the executable at least carries a complete version-info resource. Neither is a
@@ -122,7 +122,7 @@ global INI    := A_ScriptDir "\Peek.ini"
 ; (section 13) compares against the tag of the newest GitHub release. These are
 ; up here with the other constants rather than down with the updater because the
 ; startup code in section 5 reads them.
-global APPVER  := "1.3.0"
+global APPVER  := "1.3.1"
 global REPO    := "arshit09/Peek"
 global UPD_API := "https://api.github.com/repos/" REPO "/releases/latest"
 global UPD_UA  := "Peek/" APPVER
@@ -1044,6 +1044,13 @@ Position(w := 0, h := 0) {
     x := Max(l, Min(x, r - w))
     y := Max(t, Min(y, b - h))
     TIP.Show("NoActivate x" x " y" y " w" w " h" h)
+    ; +AlwaysOnTop only sets the WS_EX_TOPMOST bit. While the overlay is hidden
+    ; Windows can drop it out of the topmost band and keep the bit, and showing
+    ; it without activation does not put it back - it then opens underneath
+    ; whatever window is in front, so it only ever appeared over the desktop.
+    ; HWND_TOPMOST puts it back on top; SWP_NOMOVE|NOSIZE|NOACTIVATE.
+    DllCall("SetWindowPos", "Ptr", TIP.Hwnd, "Ptr", -1, "Int", 0, "Int", 0,
+            "Int", 0, "Int", 0, "UInt", 0x13)
 }
 
 ; Work area of whichever monitor the cursor is on, so the panel never lands
